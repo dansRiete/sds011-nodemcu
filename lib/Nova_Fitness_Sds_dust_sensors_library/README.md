@@ -113,7 +113,7 @@ result.toString();
 ```
 
 ### Setting reporting mode to 'query'
-When 'query' mode is active the sensor will not send data automatically, you need to send `sds.queryPm()` command on order to measure PM values.
+When 'query' mode is active the sensor will not send data automatically, you need to send `sds.queryPm()` command on order to Measure PM values.
 ```
 ReportingModeResult result = sds.setQueryReportingMode();
 result.mode; // MODE::QUERY

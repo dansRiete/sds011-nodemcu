@@ -12,10 +12,32 @@
 int rxPin = 4;
 int txPin = 5;
 SdsDustSensor sds(rxPin, txPin);
-char readings[ARRAY_LENGTH][STRING_LENGTH];
 int currentReadingIndex = -1;
 boolean shiftArray = false;
 
+struct Measure {
+    time_t measureTime;
+    float pm25;
+    float pm10;
+};
+
+struct Measure measures[ARRAY_LENGTH];
+
+void printMeasure(Measure measure) {
+    time_t currTime = measure.measureTime;
+    Serial.printf("%02d", hour(currTime));
+    Serial.print(":");
+    Serial.printf("%02d", minute(currTime));
+    Serial.print(":");
+    Serial.printf("%02d", second(currTime));
+    Serial.print(" - ");
+    Serial.print("PM2.5 = ");
+    Serial.printf("%.1f", measure.pm25);
+    Serial.print(", ");
+    Serial.print("PM10 = ");
+    Serial.printf("%.1f", measure.pm10);
+    Serial.println();
+}
 
 void setup() {
     Serial.begin(115200);
@@ -31,9 +53,9 @@ void setup() {
         Serial.println("Waiting for connection");
     }
 
-    for (auto &reading : readings) {
-        strcpy(reading, "");
-    }
+    for (auto &reading : measures) {
+        reading = (Measure) {-1, -1, -1};
+    };
 }
 
 void loop() {
@@ -47,44 +69,28 @@ void loop() {
         Serial.println("----------------------");
         Serial.println("");
 
-        char url[] = "";
-        snprintf(url, STRING_LENGTH, "%lu - %s %.1f, %s %.1f", millis(), "PM2.5 =", pm.pm25, "PM10 =", pm.pm10);
-
         if (++currentReadingIndex <= ARRAY_LENGTH - 1 && !shiftArray) {
-            if (DEBUG) {
-                Serial.print("Putting to array with index ");
-                Serial.println(currentReadingIndex);
-            }
-            strcpy(readings[currentReadingIndex], url);
+            measures[currentReadingIndex] = {now(), pm.pm25, pm.pm10};
         } else {
             if (!shiftArray) {
                 shiftArray = true;
             }
-
             for (int i1 = 1, i2 = 0; i1 < ARRAY_LENGTH; i1++, i2++) {
-                if (DEBUG) {
-                    Serial.print("Shifting to array with index ");
-                    Serial.println(i2);
-                }
-                strcpy(readings[i2], readings[i1]);
+                measures[i2] = measures[i1];
             }
-            if (DEBUG) {
-                Serial.print("Putting to array with index ");
-                Serial.println(ARRAY_LENGTH - 1);
-            }
-            strcpy(readings[ARRAY_LENGTH - 1], url);
+            measures[ARRAY_LENGTH - 1] = {now(), pm.pm25, pm.pm10};
         }
 
-        for (int i = 0; i < ARRAY_LENGTH; i++) {
-            Serial.print(i);
-            Serial.print(". ");
-            Serial.println(readings[i]);
+        for (auto &measure : measures) {
+            time_t currTime = measure.measureTime;
+            if (currTime != -1) {
+                printMeasure(measure);
+            }
         }
 
 //        HTTPClient http;    //Declare object of class HTTPClient
 //        http.begin(url);
 //        http.end();  //Close connection
-
 
     } else {
         Serial.print("Could not read values from sensor, reason: ");
@@ -95,9 +101,6 @@ void loop() {
     if (state.isWorking()) {
         Serial.println("Problem with sleeping the sensor.");
     } else {
-        if (DEBUG) {
-            Serial.println("Sensor is sleeping");
-        }
         delay(SLEEPING_PERIOD); // wait 1 minute
     }
 }

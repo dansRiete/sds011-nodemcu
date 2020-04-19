@@ -123,7 +123,7 @@ struct WorkingPeriodResult: public Result {
   String toString() {
     switch (period) {
       case 0: return "Working period: continuous";
-      case 1 ... 30: return "Working period: " + String(period) + " min cycles: work 30 seconds, measure and sleep";
+      case 1 ... 30: return "Working period: " + String(period) + " min cycles: work 30 seconds, Measure and sleep";
       default: return "Working period: undefined";
     }
   }
