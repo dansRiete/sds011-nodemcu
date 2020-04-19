@@ -26,6 +26,12 @@ struct Measure {
 
 struct Measure measures[ARRAY_LENGTH];
 
+String getTimeString(time_t time){
+    char measureString[10];
+    snprintf(measureString, 10, "%02d:%02d:%02d", hour(time), minute(time), second(time));
+    return String(measureString);
+}
+
 String measureToString(Measure measure) {
     char measureString[50];
     snprintf(measureString, 50, "%02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f\n",
@@ -37,12 +43,15 @@ String measureToString(Measure measure) {
     return String(measureString);
 }
 
-String measuresToString() {
+String measuresToString(boolean html) {
     String measuresString = "";
     for (auto &measure : measures) {
         time_t currTime = measure.measureTime;
         if (currTime != -1) {
             measuresString += measureToString(measure);
+            if(html) {
+                measuresString += "<br>";
+            }
         }
     }
     return measuresString;
@@ -75,7 +84,7 @@ void setup() {
     }
 
     server.on("/", [](){
-        server.send(200, "text/html", measuresToString());
+        server.send(200, "text/html", measuresToString(true));
     });
     server.begin();
 
@@ -85,7 +94,7 @@ void setup() {
 }
 
 void printMeasures() {
-    Serial.println(measuresToString());
+    Serial.println(measuresToString(false));
 }
 
 void loop() {
