@@ -13,6 +13,8 @@ const int SENSOR_DX_PIN = 5;
 
 SdsDustSensor sds(SENSOR_RX_PIN, SENSOR_DX_PIN);
 int currentReadingIndex = -1;
+int step = 1;
+unsigned long currentTimeMillis = 0;
 boolean firstPass = true;
 
 MDNSResponder mdns;
@@ -26,7 +28,7 @@ struct Measure {
 
 struct Measure measures[ARRAY_LENGTH];
 
-String getTimeString(time_t time){
+String getTimeString(time_t time) {
     char measureString[10];
     snprintf(measureString, 10, "%02d:%02d:%02d", hour(time), minute(time), second(time));
     return String(measureString);
@@ -35,10 +37,10 @@ String getTimeString(time_t time){
 String measureToString(Measure measure) {
     char measureString[50];
     snprintf(measureString, 50, "%02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f\n",
-            hour(measure.measureTime),
-            minute(measure.measureTime),
-            second(measure.measureTime),
-            measure.pm25, measure.pm10
+             hour(measure.measureTime),
+             minute(measure.measureTime),
+             second(measure.measureTime),
+             measure.pm25, measure.pm10
     );
     return String(measureString);
 }
@@ -49,7 +51,7 @@ String measuresToString(boolean html) {
         time_t currTime = measure.measureTime;
         if (currTime != -1) {
             measuresString += measureToString(measure);
-            if(html) {
+            if (html) {
                 measuresString += "<br>";
             }
         }
@@ -71,7 +73,7 @@ void setup() {
         delay(500);
         Serial.println("Waiting for connection");
     }
-    
+
     Serial.println("");
     Serial.print("Connected to ");  //  "Подключились к "
     Serial.println(ssid);
@@ -83,7 +85,7 @@ void setup() {
         //  "Запущен MDNSresponder"
     }
 
-    server.on("/", [](){
+    server.on("/", []() {
         server.send(200, "text/html", measuresToString(true));
     });
     server.begin();
@@ -91,6 +93,10 @@ void setup() {
     for (auto &reading : measures) {
         reading = (Measure) {-1, -1, -1};
     }
+    sds.wakeup();
+    currentTimeMillis = millis();
+    Serial.print(getTimeString(now()));
+    Serial.println(" - The sensor should be woken now");
 }
 
 void printMeasures() {
@@ -98,44 +104,53 @@ void printMeasures() {
 }
 
 void loop() {
-    sds.wakeup();
-    delay(WORKING_PERIOD); // working 30 seconds
+    server.handleClient();
+    if (millis() - currentTimeMillis > WORKING_PERIOD && step == 1) {
+        PmResult pm = sds.queryPm();
+        Serial.print(getTimeString(now()));
+        Serial.println(" - Checking the sensor");
 
-    PmResult pm = sds.queryPm();
-    if (pm.isOk()) {
+        if (pm.isOk()) {
 
-        Serial.println();
-        Serial.println("----------------------");
-        Serial.println();
+            Serial.println();
+            Serial.println("----------------------");
+            Serial.println();
 
-        if (++currentReadingIndex <= ARRAY_LENGTH - 1 && firstPass) {
-            measures[currentReadingIndex] = {now(), pm.pm25, pm.pm10};
+            if (++currentReadingIndex <= ARRAY_LENGTH - 1 && firstPass) {
+                measures[currentReadingIndex] = {now(), pm.pm25, pm.pm10};
+            } else {
+                for (int i1 = 1, i2 = 0; i1 < ARRAY_LENGTH; i1++, i2++) {
+                    // Shift all the array's content on one position
+                    measures[i2] = measures[i1];
+                }
+                measures[ARRAY_LENGTH - 1] = {now(), pm.pm25, pm.pm10};
+                if (firstPass) {
+                    firstPass = false;
+                }
+            }
+
+            printMeasures();
+
         } else {
-            for (int i1 = 1, i2 = 0; i1 < ARRAY_LENGTH; i1++, i2++) {
-                // Shift all the array's content on one position
-                measures[i2] = measures[i1];
-            }
-            measures[ARRAY_LENGTH - 1] = {now(), pm.pm25, pm.pm10};
-            if (firstPass) {
-                firstPass = false;
-            }
+            Serial.print("Could not read values from sensor, reason: ");
+            Serial.println(pm.statusToString());
         }
 
-        printMeasures();
+        WorkingStateResult state = sds.sleep();
+        Serial.print(getTimeString(now()));
+        Serial.println(" - The sensor should be sleeping now");
 
-//        HTTPClient http;    //Declare object of class HTTPClient
-//        http.begin(url);
-//        http.end();  //Close connection
-
-    } else {
-        Serial.print("Could not read values from sensor, reason: ");
-        Serial.println(pm.statusToString());
+        if (state.isWorking()) {
+            Serial.println("Problem with sleeping the sensor.");
+        }
+        currentTimeMillis = millis();
+        step = 2;
     }
-
-    WorkingStateResult state = sds.sleep();
-    if (state.isWorking()) {
-        Serial.println("Problem with sleeping the sensor.");
-    } else {
-        delay(SLEEPING_PERIOD); // wait 1 minute
+    if (millis() - currentTimeMillis > SLEEPING_PERIOD && step == 2) {
+        currentTimeMillis = millis();
+        step = 1;
+        sds.wakeup();
+        Serial.print(getTimeString(now()));
+        Serial.println(" - The sensor should be woken now");
     }
 }
