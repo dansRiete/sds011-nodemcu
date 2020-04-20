@@ -5,9 +5,9 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 
-#define ARRAY_LENGTH 5
-#define WORKING_PERIOD 30 * 1000
-#define SLEEPING_PERIOD 30 * 1000
+#define MEASURES_NUMBER_TO_STORE 1000
+#define WORKING_PERIOD 35*1000
+#define SLEEPING_PERIOD 3*60*1000
 const int SENSOR_RX_PIN = 4;
 const int SENSOR_DX_PIN = 5;
 
@@ -26,7 +26,7 @@ struct Measure {
     float pm10;
 };
 
-struct Measure measures[ARRAY_LENGTH];
+struct Measure measures[MEASURES_NUMBER_TO_STORE];
 
 String getTimeString(time_t time) {
     char measureString[10];
@@ -59,9 +59,19 @@ String measuresToString(boolean html) {
     return measuresString;
 }
 
+void printAllMeasures() {
+    Serial.println(measuresToString(false));
+}
+
+void printMeasure(Measure measure) {
+    Serial.println(measureToString(measure));
+}
+
 void setup() {
     Serial.begin(115200);
     sds.begin(9600);
+    sds.setQueryReportingMode();
+    sds.setCustomWorkingPeriod(1);
 
     Serial.println(sds.queryFirmwareVersion().toString()); // prints firmware version
     Serial.println(sds.setQueryReportingMode().toString()); // ensures sensor is in 'query' reporting mode
@@ -74,11 +84,7 @@ void setup() {
         Serial.println("Waiting for connection");
     }
 
-    Serial.println("");
-    Serial.print("Connected to ");  //  "Подключились к "
-    Serial.println(ssid);
-    Serial.print("IP address: ");  //  "IP-адрес: "
-    Serial.println(WiFi.localIP());
+    Serial.println(""); Serial.print("Connected to "); Serial.println(ssid); Serial.print("IP address: "); Serial.println(WiFi.localIP());
 
     if (mdns.begin("esp8266", WiFi.localIP())) {
         Serial.println("MDNS responder started");
@@ -95,41 +101,33 @@ void setup() {
     }
     sds.wakeup();
     currentTimeMillis = millis();
-    Serial.print(getTimeString(now()));
-    Serial.println(" - The sensor should be woken now");
-}
-
-void printMeasures() {
-    Serial.println(measuresToString(false));
+//    Serial.print(getTimeString(now()));
+//    Serial.println(" - The sensor should be woken now");
 }
 
 void loop() {
     server.handleClient();
     if (millis() - currentTimeMillis > WORKING_PERIOD && step == 1) {
         PmResult pm = sds.queryPm();
-        Serial.print(getTimeString(now()));
-        Serial.println(" - Checking the sensor");
+//        Serial.print(getTimeString(now()));
+//        Serial.println(" - Checking the sensor");
 
         if (pm.isOk()) {
-
-            Serial.println();
-            Serial.println("----------------------");
-            Serial.println();
-
-            if (++currentReadingIndex <= ARRAY_LENGTH - 1 && firstPass) {
-                measures[currentReadingIndex] = {now(), pm.pm25, pm.pm10};
+            Measure currentMeasure = {now(), pm.pm25, pm.pm10};
+            if (++currentReadingIndex <= MEASURES_NUMBER_TO_STORE - 1 && firstPass) {
+                measures[currentReadingIndex] = currentMeasure;
             } else {
-                for (int i1 = 1, i2 = 0; i1 < ARRAY_LENGTH; i1++, i2++) {
+                for (int i1 = 1, i2 = 0; i1 < MEASURES_NUMBER_TO_STORE; i1++, i2++) {
                     // Shift all the array's content on one position
                     measures[i2] = measures[i1];
                 }
-                measures[ARRAY_LENGTH - 1] = {now(), pm.pm25, pm.pm10};
+                measures[MEASURES_NUMBER_TO_STORE - 1] = currentMeasure;
                 if (firstPass) {
                     firstPass = false;
                 }
             }
 
-            printMeasures();
+            printMeasure(currentMeasure);
 
         } else {
             Serial.print("Could not read values from sensor, reason: ");
@@ -137,8 +135,8 @@ void loop() {
         }
 
         WorkingStateResult state = sds.sleep();
-        Serial.print(getTimeString(now()));
-        Serial.println(" - The sensor should be sleeping now");
+//        Serial.print(getTimeString(now()));
+//        Serial.println(" - The sensor should be sleeping now");
 
         if (state.isWorking()) {
             Serial.println("Problem with sleeping the sensor.");
@@ -150,7 +148,7 @@ void loop() {
         currentTimeMillis = millis();
         step = 1;
         sds.wakeup();
-        Serial.print(getTimeString(now()));
-        Serial.println(" - The sensor should be woken now");
+//        Serial.print(getTimeString(now()));
+//        Serial.println(" - The sensor should be woken now");
     }
 }
