@@ -6,9 +6,9 @@
 #include <ESP8266mDNS.h>
 #include <math.h>
 
-#define MEASURES_NUMBER_TO_STORE 1000
+#define MEASURES_NUMBER_TO_STORE 3600
 #define WORKING_PERIOD 5*1000
-#define SLEEPING_PERIOD 30*1000
+#define SLEEPING_PERIOD 54*1000
 const int SENSOR_RX_PIN = 4;
 const int SENSOR_DX_PIN = 5;
 
@@ -17,6 +17,8 @@ int currentReadingIndex = -1;
 int step = 1;
 unsigned long currentTimeMillis = 0;
 boolean firstPass = true;
+boolean thereIsMore = false;
+int thereIsMoreCounter = 0;
 
 MDNSResponder mdns;
 ESP8266WebServer server(80);
@@ -25,7 +27,6 @@ struct Measure {
     time_t measureTime;
     int pm25;
     int pm10;
-    int total;
 };
 
 struct Measure measures[MEASURES_NUMBER_TO_STORE];
@@ -45,23 +46,30 @@ String measureToString(Measure measure) {
              second(measure.measureTime),
              4, 4, String(measure.pm25).c_str(),
              4, 4, String(measure.pm10).c_str(),
-             4, 4, String(measure.total).c_str()
+             4, 4, String(measure.pm25 + measure.pm10).c_str()
     );
     return String(measureString);
 }
 
 String measuresToString(boolean html) {
     String measuresString = "";
-    for (int i = MEASURES_NUMBER_TO_STORE - 1; i >= 0; i--) {
+    int i1 = 0;
+    for (int i = thereIsMore ? thereIsMoreCounter : MEASURES_NUMBER_TO_STORE - 1; i >= 0; i--) {
+        if(i1 > 100) {
+            thereIsMoreCounter = i;
+            break;
+        }
         Measure measure = measures[i];
         time_t currTime = measure.measureTime;
         if (currTime != -1) {
+            i1++;
             measuresString += measureToString(measure);
             if (html) {
                 measuresString += "<br>";
             }
         }
     }
+    thereIsMore = i1 > 100;
     return measuresString;
 }
 
@@ -99,6 +107,17 @@ void setup() {
 
     server.on("/", []() {
         server.send(200, "text/html", measuresToString(true));
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        String content = measuresToString(true);
+        Serial.print("content length: ");
+        Serial.println(content.length());
+        server.send(200, "text/html", content);
+        while(thereIsMore){
+            content = measuresToString(true);
+            server.sendContent(content);
+        }
+        thereIsMore = false;
+        server.client().stop();
     });
     server.begin();
 
@@ -121,7 +140,7 @@ void loop() {
         if (pm.isOk()) {
             int pm25 = (int) round((double) pm.pm25);
             int pm10 = (int) round((double) pm.pm10);
-            Measure currentMeasure = {now(), pm25, pm10, pm25 + pm10};
+            Measure currentMeasure = {now(), pm25, pm10};
             if (++currentReadingIndex <= MEASURES_NUMBER_TO_STORE - 1 && firstPass) {
                 measures[currentReadingIndex] = currentMeasure;
             } else {
