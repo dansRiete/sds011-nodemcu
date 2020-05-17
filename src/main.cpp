@@ -37,13 +37,15 @@ String getTimeString(time_t time) {
 }
 
 String measureToString(Measure measure) {
-    char measureString[50];
-    snprintf(measureString, 50, "%dD %02d:%02d:%02d - PM2.5 = %d, PM10 = %d, Total = %d\n",
+    char measureString[60];
+    snprintf(measureString, 60, "%dD %02d:%02d:%02d - PM2.5 = %*.*s, PM10 = %*.*s, Total = %*.*s\n",
              day(measure.measureTime),
              hour(measure.measureTime),
              minute(measure.measureTime),
              second(measure.measureTime),
-             measure.pm25, measure.pm10, measure.total
+             4, 4, String(measure.pm25).c_str(),
+             4, 4, String(measure.pm10).c_str(),
+             4, 4, String(measure.total).c_str()
     );
     return String(measureString);
 }
