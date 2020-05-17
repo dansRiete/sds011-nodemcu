@@ -4,10 +4,11 @@
 #include <../lib/Time-master/TimeLib.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <math.h>
 
 #define MEASURES_NUMBER_TO_STORE 1000
-#define WORKING_PERIOD 35*1000
-#define SLEEPING_PERIOD 3*60*1000
+#define WORKING_PERIOD 5*1000
+#define SLEEPING_PERIOD 30*1000
 const int SENSOR_RX_PIN = 4;
 const int SENSOR_DX_PIN = 5;
 
@@ -22,8 +23,9 @@ ESP8266WebServer server(80);
 
 struct Measure {
     time_t measureTime;
-    float pm25;
-    float pm10;
+    int pm25;
+    int pm10;
+    int total;
 };
 
 struct Measure measures[MEASURES_NUMBER_TO_STORE];
@@ -36,18 +38,20 @@ String getTimeString(time_t time) {
 
 String measureToString(Measure measure) {
     char measureString[50];
-    snprintf(measureString, 50, "%02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f\n",
+    snprintf(measureString, 50, "%dD %02d:%02d:%02d - PM2.5 = %d, PM10 = %d, Total = %d\n",
+             day(measure.measureTime),
              hour(measure.measureTime),
              minute(measure.measureTime),
              second(measure.measureTime),
-             measure.pm25, measure.pm10
+             measure.pm25, measure.pm10, measure.total
     );
     return String(measureString);
 }
 
 String measuresToString(boolean html) {
     String measuresString = "";
-    for (auto &measure : measures) {
+    for (int i = MEASURES_NUMBER_TO_STORE - 1; i >= 0; i--) {
+        Measure measure = measures[i];
         time_t currTime = measure.measureTime;
         if (currTime != -1) {
             measuresString += measureToString(measure);
@@ -71,7 +75,7 @@ void setup() {
     Serial.begin(115200);
     sds.begin(9600);
     sds.setQueryReportingMode();
-    sds.setCustomWorkingPeriod(1);
+    sds.setCustomWorkingPeriod(0);
 
     Serial.println(sds.queryFirmwareVersion().toString()); // prints firmware version
     Serial.println(sds.setQueryReportingMode().toString()); // ensures sensor is in 'query' reporting mode
@@ -113,7 +117,9 @@ void loop() {
 //        Serial.println(" - Checking the sensor");
 
         if (pm.isOk()) {
-            Measure currentMeasure = {now(), pm.pm25, pm.pm10};
+            int pm25 = (int) round((double) pm.pm25);
+            int pm10 = (int) round((double) pm.pm10);
+            Measure currentMeasure = {now(), pm25, pm10, pm25 + pm10};
             if (++currentReadingIndex <= MEASURES_NUMBER_TO_STORE - 1 && firstPass) {
                 measures[currentReadingIndex] = currentMeasure;
             } else {
