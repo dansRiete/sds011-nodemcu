@@ -56,7 +56,25 @@ String measureToString(Measure measure) {
 
 String measuresToString(boolean html) {
     String measuresString = "";
-    for (auto &measure : measures) {
+    int i1 = 0;
+    if(!thereIsMore){
+        for(int i = LAST_MEASURES_NUMBER_TO_STORE - 1; i >= 0; i--){
+            Measure measure = lastMeasures[i];
+            time_t currTime = measure.measureTime;
+            if (currTime != -1) {
+                measuresString += "- " + measureToString(measure);
+                if (html) {
+                    measuresString += "<br>";
+                }
+            }
+        }
+    }
+    for (int i = thereIsMore ? thereIsMoreCounter : MEASURES_NUMBER_TO_STORE - 1; i >= 0; i--) {
+        if(i1 > 100) {
+            thereIsMoreCounter = i;
+            break;
+        }
+        Measure measure = measures[i];
         time_t currTime = measure.measureTime;
         if (currTime != -1) {
             measuresString += measureToString(measure);
@@ -65,15 +83,7 @@ String measuresToString(boolean html) {
             }
         }
     }
-    for (auto &measure : lastMeasures) {
-        time_t currTime = measure.measureTime;
-        if (currTime != -1) {
-            measuresString += measureToString(measure);
-            if (html) {
-                measuresString += "<br>";
-            }
-        }
-    }
+    thereIsMore = i1 > 100;
     return measuresString;
 }
 
