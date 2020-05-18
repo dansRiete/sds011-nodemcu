@@ -6,13 +6,15 @@
 #include <ESP8266mDNS.h>
 #include <math.h>
 
-#define MEASURES_NUMBER_TO_STORE 3600
+#define MEASURES_NUMBER_TO_STORE 1080
+#define LAST_MEASURES_NUMBER_TO_STORE 15
 #define WORKING_PERIOD 5*1000
 #define SLEEPING_PERIOD 54*1000
 const int SENSOR_RX_PIN = 4;
 const int SENSOR_DX_PIN = 5;
 
 SdsDustSensor sds(SENSOR_RX_PIN, SENSOR_DX_PIN);
+int currentLastReadingIndex = -1;
 int currentReadingIndex = -1;
 int step = 1;
 unsigned long currentTimeMillis = 0;
@@ -30,6 +32,7 @@ struct Measure {
 };
 
 struct Measure measures[MEASURES_NUMBER_TO_STORE];
+struct Measure lastMeasures[LAST_MEASURES_NUMBER_TO_STORE];
 
 String getTimeString(time_t time) {
     char measureString[10];
@@ -53,23 +56,24 @@ String measureToString(Measure measure) {
 
 String measuresToString(boolean html) {
     String measuresString = "";
-    int i1 = 0;
-    for (int i = thereIsMore ? thereIsMoreCounter : MEASURES_NUMBER_TO_STORE - 1; i >= 0; i--) {
-        if(i1 > 100) {
-            thereIsMoreCounter = i;
-            break;
-        }
-        Measure measure = measures[i];
+    for (auto &measure : measures) {
         time_t currTime = measure.measureTime;
         if (currTime != -1) {
-            i1++;
             measuresString += measureToString(measure);
             if (html) {
                 measuresString += "<br>";
             }
         }
     }
-    thereIsMore = i1 > 100;
+    for (auto &measure : lastMeasures) {
+        time_t currTime = measure.measureTime;
+        if (currTime != -1) {
+            measuresString += measureToString(measure);
+            if (html) {
+                measuresString += "<br>";
+            }
+        }
+    }
     return measuresString;
 }
 
@@ -124,6 +128,9 @@ void setup() {
     for (auto &reading : measures) {
         reading = (Measure) {-1, -1, -1};
     }
+    for (auto &reading : lastMeasures) {
+        reading = (Measure) {-1, -1, -1};
+    }
     sds.wakeup();
     currentTimeMillis = millis();
 //    Serial.print(getTimeString(now()));
@@ -141,18 +148,37 @@ void loop() {
             int pm25 = (int) round((double) pm.pm25);
             int pm10 = (int) round((double) pm.pm10);
             Measure currentMeasure = {now(), pm25, pm10};
-            if (++currentReadingIndex <= MEASURES_NUMBER_TO_STORE - 1 && firstPass) {
-                measures[currentReadingIndex] = currentMeasure;
-            } else {
-                for (int i1 = 1, i2 = 0; i1 < MEASURES_NUMBER_TO_STORE; i1++, i2++) {
-                    // Shift all the array's content on one position
-                    measures[i2] = measures[i1];
+
+            if (++currentLastReadingIndex > LAST_MEASURES_NUMBER_TO_STORE - 1) {
+                double pm25Summ = 0;
+                double pm10Summ = 0;
+                int number = 0;
+                time_t lastTime;
+                for (auto &reading : lastMeasures) {
+                    number++;
+                    pm25Summ += reading.pm25;
+                    pm10Summ += reading.pm10;
+                    lastTime = reading.measureTime;
+                    reading = (Measure) {-1, -1, -1};
                 }
-                measures[MEASURES_NUMBER_TO_STORE - 1] = currentMeasure;
-                if (firstPass) {
-                    firstPass = false;
+                currentLastReadingIndex = 0;
+                Measure thisMeasure = {lastTime, (int) round(pm25Summ/number), (int) round(pm10Summ/number)};
+
+                if (++currentReadingIndex <= MEASURES_NUMBER_TO_STORE - 1 && firstPass) {
+                    measures[currentReadingIndex] = thisMeasure;
+                } else {
+                    for (int i1 = 1, i2 = 0; i1 < MEASURES_NUMBER_TO_STORE; i1++, i2++) {
+                        // Shift all the array's content on one position
+                        measures[i2] = measures[i1];
+                    }
+                    measures[MEASURES_NUMBER_TO_STORE - 1] = thisMeasure;
+                    if (firstPass) {
+                        firstPass = false;
+                    }
                 }
             }
+
+            lastMeasures[currentLastReadingIndex] = currentMeasure;
 
             printMeasure(currentMeasure);
 
