@@ -6,9 +6,14 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <../lib/Adafruit_Sensor-master/Adafruit_Sensor.h>
+#include <../lib/DHT-sensor-library-master/DHT.h>
+#include <../lib/DHT-sensor-library-master/DHT_U.h>
 
 #define WORKING_PERIOD 5*1000
 #define SLEEPING_PERIOD 54*1000
+#define DHTPIN 0
+#define DHTTYPE           DHT11
 //#define SLEEPING_PERIOD 0
 const boolean DEBUG = true;
 const int SENSOR_RX_PIN = 4;
@@ -23,14 +28,17 @@ DS1302 rtc(RESX_PIN, DAT_PIN, CLK_PIN);
 MDNSResponder mdns;
 ESP8266WebServer server(80);
 SdsDustSensor sds(SENSOR_RX_PIN, SENSOR_DX_PIN);
+DHT_Unified dht(DHTPIN, DHTTYPE);
 
 struct Measure {
     time_t measureTime;
     float pm25;
     float pm10;
+    float temp;
+    float humid;
 };
 
-Measure nullMeasure = {0, -1, -1};
+Measure nullMeasure = {0, -1, -1, -1, -1};
 
 #define EVERY_MEASURES_NUMBER 60
 struct Measure everyMeasures[EVERY_MEASURES_NUMBER];
@@ -63,8 +71,8 @@ String getTimeString(time_t time) {
 }
 
 String measureToString(Measure measure) {
-    char measureString[60];
-    snprintf(measureString, 60, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, Total = %.1f",
+    char measureString[80];
+    snprintf(measureString, 80, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, temp = %.1fC, humid = %.0f%%",
              day(measure.measureTime),
              month(measure.measureTime),
              year(measure.measureTime),
@@ -73,7 +81,8 @@ String measureToString(Measure measure) {
              second(measure.measureTime),
              measure.pm25,
              measure.pm10,
-             measure.pm25 + measure.pm10
+             measure.temp,
+             measure.humid
     );
     return String(measureString);
 }
@@ -192,6 +201,8 @@ Measure calculate15minuteAverage(time_t currentTime) {
     }
     float pm25Summ = 0;
     float pm10Summ = 0;
+    float tempSumm = 0;
+    float humidSumm = 0;
     int counter = 0;
     time_t lastTime = 0;
     for(int i = 0; i < EVERY_MEASURES_NUMBER; i++) {
@@ -200,6 +211,8 @@ Measure calculate15minuteAverage(time_t currentTime) {
             if(DEBUG){ logAverage(measure); }
             pm25Summ += measure.pm25;
             pm10Summ += measure.pm10;
+            tempSumm += measure.temp;
+            humidSumm += measure.humid;
             lastTime = measure.measureTime;
             counter++;
             totalAveragedCounter++;
@@ -208,7 +221,13 @@ Measure calculate15minuteAverage(time_t currentTime) {
     Measure result;
 
     if(counter != 0){
-        result = {lastTime, static_cast<float>(round(pm25Summ/counter*10)/10), static_cast<float>(round(pm10Summ/counter*10)/10)};
+        result = {
+                lastTime,
+                static_cast<float>(round(pm25Summ/counter*10)/10),
+                static_cast<float>(round(pm10Summ/counter*10)/10),
+                static_cast<float>(round(tempSumm/counter*10)/10),
+                static_cast<float>(round(humidSumm/counter*10)/10),
+        };
     } else {
         result = nullMeasure;
     }
@@ -275,12 +294,55 @@ void logAverage(const Measure &measure) {
     Serial.print(measure.pm25);
     Serial.print(", ");
     Serial.print(measure.pm10);
-    Serial.print(")], ");
+    Serial.print(", ");
+    Serial.print(measure.temp);
+    Serial.print("c, ");
+    Serial.print(measure.humid);
+    Serial.print("%)], ");
+}
+
+void connectToWifi(String ssid, String passPhrase, int maxRetry) {
+    WiFi.begin(ssid, passPhrase);   //WiFi connection
+    int retries = 0;
+    while (WiFi.status() != WL_CONNECTED && retries < maxRetry) {  //Wait for the WiFI connection completion
+        delay(500);
+        Serial.println("Waiting for connection");
+        retries++;
+    }
 }
 
 void setup() {
     Serial.begin(115200);
     sds.begin(9600);
+
+    // Initialize device.
+    dht.begin();
+    Serial.println("DHTxx Unified Sensor Example");
+    // Print temperature sensor details.
+    sensor_t sensor;
+    dht.temperature().getSensor(&sensor);
+    Serial.println("------------------------------------");
+    Serial.println("Temperature");
+    Serial.print  ("Sensor:       "); Serial.println(sensor.name);
+    Serial.print  ("Driver Ver:   "); Serial.println(sensor.version);
+    Serial.print  ("Unique ID:    "); Serial.println(sensor.sensor_id);
+    Serial.print  ("Max Value:    "); Serial.print(sensor.max_value); Serial.println(" *C");
+    Serial.print  ("Min Value:    "); Serial.print(sensor.min_value); Serial.println(" *C");
+    Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println(" *C");
+    Serial.println("------------------------------------");
+    // Print humidity sensor details.
+    dht.humidity().getSensor(&sensor);
+    Serial.println("------------------------------------");
+    Serial.println("Humidity");
+    Serial.print  ("Sensor:       "); Serial.println(sensor.name);
+    Serial.print  ("Driver Ver:   "); Serial.println(sensor.version);
+    Serial.print  ("Unique ID:    "); Serial.println(sensor.sensor_id);
+    Serial.print  ("Max Value:    "); Serial.print(sensor.max_value); Serial.println("%");
+    Serial.print  ("Min Value:    "); Serial.print(sensor.min_value); Serial.println("%");
+    Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println("%");
+    Serial.println("------------------------------------");
+
+
     if(SLEEPING_PERIOD > 0) {
         sds.setQueryReportingMode();
         sds.setCustomWorkingPeriod(0);
@@ -294,21 +356,24 @@ void setup() {
 
     }
 
-    /*//SET TIME
-    rtc.writeProtect(false);
-    rtc.halt(false);
-    Time t1(2020, 5, 24, 19, 10, 00, Time::kSunday);
-    rtc.time(t1);*/
+    //SET TIME
+    //rtc.writeProtect(false);
+    //rtc.halt(false);
+//    Time t1(2020, 6, 8, 15, 40, 00, Time::kMonday);
+//    rtc.time(t1);
 
     Serial.println(sds.queryFirmwareVersion().toString()); // prints firmware version
     Serial.println(sds.setQueryReportingMode().toString()); // ensures sensor is in 'query' reporting mode
 
     const char *ssid = "ALEKSNET";
-    WiFi.begin(ssid, "ekvatorthebest");   //WiFi connection
-
-    while (WiFi.status() != WL_CONNECTED) {  //Wait for the WiFI connection completion
-        delay(500);
-        Serial.println("Waiting for connection");
+    connectToWifi(ssid, "ekvatorthebest", 20);
+    if(WiFi.status() != WL_CONNECTED){
+        ssid = "ALEKSNET_ROOF";
+        connectToWifi(ssid, "ekvatorthebest", 20);
+    }
+    if(WiFi.status() != WL_CONNECTED){
+        ssid = "ALEKSNET2";
+        connectToWifi(ssid, "ekvatorthebest", 20);
     }
 
     Serial.println(""); Serial.print("Connected to "); Serial.println(ssid); Serial.print("IP address: "); Serial.println(WiFi.localIP());
@@ -374,12 +439,35 @@ void setup() {
 void loop() {
     server.handleClient();
     if (millis() - currentTimeMillis > WORKING_PERIOD && step == 1) {
+
+        sensors_event_t tempEvent;
+        sensors_event_t humidEvent;
+        dht.temperature().getEvent(&tempEvent);
+        if (DEBUG && !isnan(tempEvent.temperature)) {
+            Serial.print("Temperature: ");
+            Serial.print(tempEvent.temperature);
+            Serial.println(" *C");
+        }
+        // Get humidity tempEvent and print its value.
+        dht.humidity().getEvent(&humidEvent);
+        if (DEBUG && !isnan(humidEvent.relative_humidity)) {
+            Serial.print("Humidity: ");
+            Serial.print(humidEvent.relative_humidity);
+            Serial.println("%");
+        }
+
         PmResult pm = sds.queryPm();
 
         if (pm.isOk()) {
             Time t = rtc.time();
             time_t currentTime = makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr-1970)});
-            Measure currentMeasure = {currentTime, static_cast<float>(round(pm.pm25*10)/10), static_cast<float>(round(pm.pm10*10)/10)};
+            Measure currentMeasure = {
+                    currentTime,
+                    static_cast<float>(round(pm.pm25*10)/10),
+                    static_cast<float>(round(pm.pm10*10)/10),
+                    tempEvent.temperature,
+                    humidEvent.relative_humidity
+            };
 
             if (DEBUG) {
                 Serial.print(++totalCounter); Serial.print(". Got a measure: "); printMeasure(currentMeasure); }
