@@ -254,6 +254,8 @@ Measure calculate1HourAverage(time_t currentTime) {
     }
     float pm25Summ = 0;
     float pm10Summ = 0;
+    float tempSumm = 0;
+    float humidSumm = 0;
     int counter = 0;
     time_t lastTime = 0;
     for(int i = 0; i < EVERY_15_MINUTES_MEASURES_NUMBER; i++) {
@@ -262,6 +264,8 @@ Measure calculate1HourAverage(time_t currentTime) {
             if(DEBUG){ logAverage(measure); }
             pm25Summ += measure.pm25;
             pm10Summ += measure.pm10;
+            tempSumm += measure.temp;
+            humidSumm += measure.humid;
             lastTime = measure.measureTime;
             counter++;
         }
@@ -270,7 +274,13 @@ Measure calculate1HourAverage(time_t currentTime) {
     Measure result;
 
     if(counter != 0){
-        result = {lastTime, static_cast<float>(round(pm25Summ/counter*10)/10), static_cast<float>(round(pm10Summ/counter*10)/10)};
+        result = {
+                lastTime,
+                static_cast<float>(round(pm25Summ/counter*10)/10),
+                static_cast<float>(round(pm10Summ/counter*10)/10),
+                static_cast<float>(round(tempSumm/counter*10)/10),
+                static_cast<float>(round(humidSumm/counter*10)/10)
+        };
     } else {
         result = nullMeasure;
     }
@@ -359,7 +369,7 @@ void setup() {
     //SET TIME
     //rtc.writeProtect(false);
     //rtc.halt(false);
-//    Time t1(2020, 6, 8, 15, 40, 00, Time::kMonday);
+//    Time t1(2020, 6, 8, 19, 16, 00, Time::kMonday);
 //    rtc.time(t1);
 
     Serial.println(sds.queryFirmwareVersion().toString()); // prints firmware version
@@ -368,7 +378,7 @@ void setup() {
     const char *ssid = "ALEKSNET";
     connectToWifi(ssid, "ekvatorthebest", 20);
     if(WiFi.status() != WL_CONNECTED){
-        ssid = "ALEKSNET_ROOF";
+        ssid = "ALEKSNET-ROOF";
         connectToWifi(ssid, "ekvatorthebest", 20);
     }
     if(WiFi.status() != WL_CONNECTED){
