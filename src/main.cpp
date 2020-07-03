@@ -10,9 +10,9 @@
 #include <../lib/DHT-sensor-library-master/DHT.h>
 #include <../lib/DHT-sensor-library-master/DHT_U.h>
 
-#define WORKING_PERIOD 2*1000
-//#define SLEEPING_PERIOD 54*1000
-#define SLEEPING_PERIOD 0
+#define WORKING_PERIOD 5*1000
+#define SLEEPING_PERIOD 55*1000
+//#define SLEEPING_PERIOD 0
 const boolean DEBUG = true;
 #define DHTPIN 0
 #define DHTTYPE           DHT11
@@ -63,6 +63,8 @@ int totalCounter = 0;
 int totalAveragedCounter = 0;
 
 void logAverage(const Measure &measure);
+
+time_t rtcNow(const Time &t);
 
 String getTimeString(time_t time) {
     char measureString[10];
@@ -170,63 +172,70 @@ void putEveryHourMeasure(Measure measure){
     }
 }
 
-bool inAnHourInterval(time_t currTime, time_t comparedTime) {
-    int minuteDiff = (minute(currTime) == 0 ? 60 : minute(currTime)) - minute(comparedTime);
-    return year(currTime - comparedTime) == 1970 &&
-           month(currTime - comparedTime) == 1 &&
-           day(currTime - comparedTime) == 1 &&
-           hour(currTime - comparedTime) == 0 &&
-            minuteDiff > 0 && minuteDiff <= 2;
+bool isInIntervalOfSeconds(time_t currTime, time_t comparedTime, long seconds) {
+    if (comparedTime == 0) {
+        return false;
+    }
+    return (long) currTime - (long) comparedTime <= seconds;
 }
 
-bool inFifteenMinutesInterval(time_t currTime, time_t comparedTime) {
-    int minuteDiff = (minute(currTime) == 0 ? 60 : minute(currTime)) - minute(comparedTime);
-    return year(currTime - comparedTime) == 1970 &&
-           month(currTime - comparedTime) == 1 &&
-           day(currTime - comparedTime) == 1 &&
-           hour(currTime - comparedTime) == 0 &&
-            minuteDiff > 0 && minuteDiff <= 1;
-}
-
-Measure calculate15minuteAverage(time_t currentTime) {
-    if( DEBUG){
+Measure calculateMinuteAverage(time_t currentTime, int seconds, Measure measuresSource[]) {
+    if (DEBUG) {
         Serial.println();
         Serial.print(getTimeString(currentTime));
-        Serial.println(" - Calculating 15 minutes average from next values:");
+        Serial.print(" - Calculating ");
+        Serial.print(seconds);
+        Serial.print(" seconds average from next values:");
         Serial.println();
     }
-    float pm25Summ = 0;
-    float pm10Summ = 0;
-    float tempSumm = 0;
-    float humidSumm = 0;
-    int counter = 0;
-    for(int i = 0; i < EVERY_MEASURES_NUMBER; i++) {
-        Measure measure = everyMeasures[i];
-        if(measure.pm25 != -1 && inFifteenMinutesInterval(currentTime, measure.measureTime)){
-            if(DEBUG){ logAverage(measure); }
+    float pm25Summ = 0, pm10Summ = 0, tempSumm = 0, humidSumm = 0;
+    int pm25Counter = 0, pm10Counter = 0, tempCounter = 0, humidCounter = 0;
+    for (int i = 0; i < EVERY_MEASURES_NUMBER; i++) {
+        Measure measure = measuresSource[i];
+        boolean b = false;
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.pm25 != -1) {
+            b = true;
+//            if(DEBUG){ logAverage(measure); }
             pm25Summ += measure.pm25;
+            pm25Counter++;
+        }
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.pm10 != -1) {
+            b = true;
+//            if(DEBUG){ logAverage(measure); }
             pm10Summ += measure.pm10;
+            pm10Counter++;
+        }
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.temp != -1) {
+            b = true;
+            if(DEBUG){ logAverage(measure); }
             tempSumm += measure.temp;
+            tempCounter++;
+        }
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.humid != -1) {
+            b = true;
+//            if(DEBUG){ logAverage(measure); }
             humidSumm += measure.humid;
-            counter++;
+            humidCounter++;
+        }
+        if (b && seconds == 15) {
             totalAveragedCounter++;
         }
     }
     Measure result;
 
-    if(counter != 0){
+    if(pm25Counter != 0 || pm10Counter != 0 || tempCounter != 0 || humidCounter != 0){
         result = {
                 currentTime,
-                static_cast<float>(round(pm25Summ/counter*10)/10),
-                static_cast<float>(round(pm10Summ/counter*10)/10),
-                static_cast<float>(round(tempSumm/counter*10)/10),
-                static_cast<float>(round(humidSumm/counter*10)/10),
+                static_cast<float>(round(pm25Summ/pm25Counter*10)/10),
+                static_cast<float>(round(pm10Summ/pm10Counter*10)/10),
+                static_cast<float>(round(tempSumm/tempCounter*10)/10),
+                static_cast<float>(round(humidSumm/humidCounter*10)/10),
         };
 
         if(DEBUG){
             Serial.println();
             Serial.print("There were ");
-            Serial.print(counter);
+            Serial.print(pm25Counter);
             Serial.print(" elements averaged.");
             Serial.print(" Total averaged: ");
             Serial.println(totalAveragedCounter);
@@ -236,56 +245,6 @@ Measure calculate15minuteAverage(time_t currentTime) {
         }
     } else {
         result = nullMeasure;
-    }
-    return result;
-}
-
-Measure calculate1HourAverage(time_t currentTime) {
-    if(DEBUG){
-        Serial.println();
-        Serial.print(getTimeString(currentTime));
-        Serial.println(" - Calculating 1 hour average from next values:");
-        Serial.println();
-    }
-    float pm25Summ = 0;
-    float pm10Summ = 0;
-    float tempSumm = 0;
-    float humidSumm = 0;
-    int counter = 0;
-    for(int i = 0; i < EVERY_15_MINUTES_MEASURES_NUMBER; i++) {
-        Measure measure = every15minutesMeasures[i];
-        if(measure.pm25 != -1 && inAnHourInterval(currentTime, measure.measureTime)){
-            if(DEBUG){ logAverage(measure); }
-            pm25Summ += measure.pm25;
-            pm10Summ += measure.pm10;
-            tempSumm += measure.temp;
-            humidSumm += measure.humid;
-            counter++;
-        }
-    }
-
-    Measure result;
-
-    if(counter != 0){
-        result = {
-                currentTime,
-                static_cast<float>(round(pm25Summ/counter*10)/10),
-                static_cast<float>(round(pm10Summ/counter*10)/10),
-                static_cast<float>(round(tempSumm/counter*10)/10),
-                static_cast<float>(round(humidSumm/counter*10)/10)
-        };
-    } else {
-        result = nullMeasure;
-    }
-
-    if(DEBUG){
-        Serial.println();
-        Serial.print("There were ");
-        Serial.print(counter);
-        Serial.println(" elements averaged");
-        Serial.print("Averaged measure: ");
-        Serial.println(measureToString(result));
-        Serial.println();
     }
     return result;
 }
@@ -312,6 +271,11 @@ void connectToWifi(String ssid, String passPhrase, int maxRetry) {
         Serial.println("Waiting for connection");
         retries++;
     }
+}
+
+time_t rtcTime() {
+    Time t = rtc.time();
+    return makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});
 }
 
 void setup() {
@@ -362,7 +326,7 @@ void setup() {
     //SET TIME
     //rtc.writeProtect(false);
     //rtc.halt(false);
-//    Time t1(2020, 6, 8, 19, 16, 00, Time::kMonday);
+//    Time t1(2020, 12, 31, 23, 56, 00, Time::kMonday);
 //    rtc.time(t1);
 
     Serial.println(sds.queryFirmwareVersion().toString()); // prints firmware version
@@ -379,7 +343,8 @@ void setup() {
         connectToWifi(ssid, "ekvatorthebest", 20);
     }
 
-    Serial.println(""); Serial.print("Connected to "); Serial.println(ssid); Serial.print("IP address: "); Serial.println(WiFi.localIP());
+    Serial.println(""); Serial.print("Connected to "); Serial.println(ssid);
+    Serial.print("IP address: "); Serial.println(WiFi.localIP());
 
     if (mdns.begin("esp8266", WiFi.localIP())) {
         Serial.println("MDNS responder started");
@@ -420,9 +385,6 @@ void setup() {
 
     server.begin();
 
-    Time t = rtc.time();
-    time_t currTimeT = makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});
-
     for (auto &reading : everyMeasures) {
         reading = nullMeasure;
     }
@@ -432,9 +394,10 @@ void setup() {
     for (auto &reading : everyHourMeasures) {
         reading = nullMeasure;
     }
-    delay(2000);
     if (DEBUG) {
-        Serial.print(getTimeString(currTimeT)); Serial.println(" - The sensor should be woken now");Serial.print("WORKING_PERIOD is ");Serial.println(WORKING_PERIOD);Serial.print("SLEEPING_PERIOD is ");Serial.println(SLEEPING_PERIOD);
+        Serial.print(getTimeString(rtcTime())); Serial.println(" - The sensor should be woken now");
+        Serial.print("WORKING_PERIOD is ");Serial.println(WORKING_PERIOD);Serial.print("SLEEPING_PERIOD is ");
+        Serial.println(SLEEPING_PERIOD);
     }
 }
 
@@ -443,20 +406,22 @@ void loop() {
     delay(20);
 
     server.handleClient();
-    Time t = rtc.time();
-    time_t currentTime = makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr-1970)});
+    time_t currentTime = rtcTime();
+    long currentTimestamp = (long) currentTime;
 
-    if (t.sec == 0 && last15MinuteAverageMinute != t.min) {
-        last15MinuteAverageMinute = t.min;
-        putEvery15MinuteMeasure(calculate15minuteAverage(currentTime));
+    if (currentTimestamp % (3 * 60) == 0 && last15MinuteAverageMinute != minute(currentTime)) {
+        last15MinuteAverageMinute = minute(currentTime);
+        putEvery15MinuteMeasure(calculateMinuteAverage(currentTime, 3 * 60, everyMeasures));
     }
 
-    if (t.min % 2 == 0 && last1HourAverageMinute != t.min) {
-        last1HourAverageMinute = t.min;
-        putEveryHourMeasure(calculate1HourAverage(currentTime));
+    if (currentTimestamp % (15 * 60) == 0 && last1HourAverageMinute != minute(currentTime)) {
+        last1HourAverageMinute = minute(currentTime);
+        putEveryHourMeasure(calculateMinuteAverage(currentTime, 15 * 60, every15minutesMeasures));
     }
 
+    //  Step 1
     if (millis() - currentTimeMillis > WORKING_PERIOD && step == 1) {
+        currentTimeMillis = millis();
 
         sensors_event_t tempEvent;
         sensors_event_t humidEvent;
@@ -464,27 +429,28 @@ void loop() {
         dht.humidity().getEvent(&humidEvent);
 
         PmResult pm = sds.queryPm();
-
+        float pm25 = -1;
+        float pm10 = -1;
         if (pm.isOk()) {
-            Measure currentMeasure = {
-                    currentTime,
-                    static_cast<float>(round(pm.pm25*10)/10),
-                    static_cast<float>(round(pm.pm10*10)/10),
-                    tempEvent.temperature,
-                    humidEvent.relative_humidity
-            };
-
-            if (DEBUG) {
-                Serial.print(++totalCounter); Serial.print(". Got a measure: "); printMeasure(currentMeasure); }
-
-            putEveryMeasure(currentMeasure);
-
-        } else {
-            Serial.print("Could not read values from sensor, reason: ");
-            Serial.println(pm.statusToString());
+            pm25 = round(pm.pm25*10)/10;
+            pm10 = round(pm.pm10*10)/10;
         }
-        currentTimeMillis = millis();
-        if(SLEEPING_PERIOD > 0){
+
+        Measure currentMeasure = {
+                currentTime,
+                pm25,
+                pm10,
+                isnan(tempEvent.temperature) ? -1 : tempEvent.temperature,
+                isnan(humidEvent.relative_humidity) ? -1 : humidEvent.relative_humidity
+        };
+
+        if (DEBUG) {
+            Serial.print(++totalCounter); Serial.print(". Got a measure: "); printMeasure(currentMeasure); }
+
+        putEveryMeasure(currentMeasure);
+
+
+        if (SLEEPING_PERIOD > 0) {
             WorkingStateResult state = sds.sleep();
             if (state.isWorking()) {
                 Serial.println("Problem with sleeping the sensor.");
@@ -492,6 +458,8 @@ void loop() {
             step = 2;
         }
     }
+
+    //  Step 2
     if (SLEEPING_PERIOD > 0 && millis() - currentTimeMillis > SLEEPING_PERIOD && step == 2) {
         currentTimeMillis = millis();
         step = 1;
