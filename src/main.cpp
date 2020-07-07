@@ -35,7 +35,8 @@ struct Measure {
     float pm25;
     float pm10;
     float temp;
-    float humid;
+    float rh;
+    float ah;
 };
 
 Measure nullMeasure = {0, -1, -1, -1, -1};
@@ -74,7 +75,7 @@ String getTimeString(time_t time) {
 
 String measureToString(Measure measure) {
     char measureString[80];
-    snprintf(measureString, 80, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, temp = %.1fC, humid = %.0f%%",
+    snprintf(measureString, 80, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, temp = %.1fC, rh = %.0f%%",
              day(measure.measureTime),
              month(measure.measureTime),
              year(measure.measureTime),
@@ -84,7 +85,7 @@ String measureToString(Measure measure) {
              measure.pm25,
              measure.pm10,
              measure.temp,
-             measure.humid
+             measure.rh
     );
     return String(measureString);
 }
@@ -211,10 +212,10 @@ Measure calculateMinuteAverage(time_t currentTime, int seconds, Measure measures
             tempSumm += measure.temp;
             tempCounter++;
         }
-        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.humid != -1) {
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.rh != -1) {
             b = true;
 //            if(DEBUG){ logAverage(measure); }
-            humidSumm += measure.humid;
+            humidSumm += measure.rh;
             humidCounter++;
         }
         if (b && seconds == 15) {
@@ -258,8 +259,8 @@ void logAverage(const Measure &measure) {
     Serial.print(measure.pm10);
     Serial.print(", temp = ");
     Serial.print(measure.temp);
-    Serial.print("C, humid = ");
-    Serial.print(measure.humid);
+    Serial.print("C, rh = ");
+    Serial.print(measure.rh);
     Serial.println("%");
 }
 
@@ -276,6 +277,10 @@ void connectToWifi(String ssid, String passPhrase, int maxRetry) {
 time_t rtcTime() {
     Time t = rtc.time();
     return makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});
+}
+
+float calculateAhHumidity(float t, float rh) {
+    return 6.112 * pow(2.71828, 17.67 * t / (243.5 + t)) * rh * 2.1674 / (273.15 + t);
 }
 
 void setup() {
@@ -441,7 +446,9 @@ void loop() {
                 pm25,
                 pm10,
                 isnan(tempEvent.temperature) ? -1 : tempEvent.temperature,
-                isnan(humidEvent.relative_humidity) ? -1 : humidEvent.relative_humidity
+                isnan(humidEvent.relative_humidity) ? -1 : humidEvent.relative_humidity,
+                isnan(humidEvent.relative_humidity) || isnan(tempEvent.temperature) ? -1 :
+                calculateAhHumidity(tempEvent.temperature, humidEvent.relative_humidity)
         };
 
         if (DEBUG) {
