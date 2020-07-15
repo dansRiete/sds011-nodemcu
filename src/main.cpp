@@ -12,6 +12,7 @@
 
 #define WORKING_PERIOD 5*1000
 #define SLEEPING_PERIOD 55*1000
+#define HTTP_RESPONSE_CHUNKS_SIZE 200
 //#define SLEEPING_PERIOD 0
 const boolean DEBUG = true;
 #define DHTPIN 0
@@ -36,7 +37,6 @@ struct Measure {
     float pm10;
     float temp;
     float rh;
-    float ah;
 };
 
 Measure nullMeasure = {0, -1, -1, -1, -1};
@@ -65,17 +65,19 @@ int totalAveragedCounter = 0;
 
 void logAverage(const Measure &measure);
 
-time_t rtcNow(const Time &t);
-
 String getTimeString(time_t time) {
     char measureString[10];
     snprintf(measureString, 10, "%02d:%02d:%02d", hour(time), minute(time), second(time));
     return String(measureString);
 }
 
+float calculateAbsoluteHumidity(float temp, float rh) {
+    return 6.112 * pow(2.71828, 17.67 * temp / (243.5 + temp)) * rh * 2.1674 / (273.15 + temp);
+}
+
 String measureToString(Measure measure) {
-    char measureString[80];
-    snprintf(measureString, 80, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, temp = %.1fC, rh = %.0f%%",
+    char measureString[90];
+    snprintf(measureString, 90, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, temp = %.1fC, RH = %.0f%%, AH = %.1fg/m3",
              day(measure.measureTime),
              month(measure.measureTime),
              year(measure.measureTime),
@@ -85,7 +87,38 @@ String measureToString(Measure measure) {
              measure.pm25,
              measure.pm10,
              measure.temp,
-             measure.rh
+             measure.rh,
+             measure.temp == -1 || measure.rh == -1 ? -1 : calculateAbsoluteHumidity(measure.temp, measure.rh)
+    );
+    return String(measureString);
+}
+
+String timeToString(time_t t){
+    char measureString[20];
+    snprintf(measureString, 60, "%02d/%02d/%d-%02d:%02d:%02d",        //todo add handling weekdays
+             day(t),
+             month(t),
+             year(t),
+             hour(t),
+             minute(t),
+             second(t));
+    return String(measureString);
+}
+
+String measureToCsvString(Measure measure) {
+    char measureString[60];
+    snprintf(measureString, 60, "%02d/%02d/%d-%02d:%02d:%02d, %.1f, %.1f, %.1f, %.0f, %.1f\n",
+             day(measure.measureTime),
+             month(measure.measureTime),
+             year(measure.measureTime),
+             hour(measure.measureTime),
+             minute(measure.measureTime),
+             second(measure.measureTime),
+             measure.pm25,
+             measure.pm10,
+             measure.temp,
+             measure.rh,
+             measure.temp == -1 || measure.rh == -1 ? -1 : calculateAbsoluteHumidity(measure.temp, measure.rh)
     );
     return String(measureString);
 }
@@ -94,7 +127,7 @@ String measuresToString(boolean html, Measure measuresToPrint[], int length) {
     String measuresString = "";
     int i1 = 0;
     for (int i = thereIsMore ? thereIsMoreCounter : length - 1; i >= 0; i--) {
-        if (i1 > 25) {
+        if (i1 > HTTP_RESPONSE_CHUNKS_SIZE) {
             thereIsMoreCounter = i;
             break;
         }
@@ -108,7 +141,26 @@ String measuresToString(boolean html, Measure measuresToPrint[], int length) {
             i1++;
         }
     }
-    thereIsMore = i1 > 25;
+    thereIsMore = i1 > HTTP_RESPONSE_CHUNKS_SIZE;
+    return measuresString;
+}
+
+String measuresToCsv(Measure measuresToPrint[], int length) {
+    String measuresString = thereIsMore  ? "" : "date, pm2.5, pm10, temp, RH, AH\n";
+    int i1 = 0;
+    for (int i = thereIsMore ? thereIsMoreCounter : length - 1; i >= 0; i--) {
+        if (i1 > HTTP_RESPONSE_CHUNKS_SIZE) {
+            thereIsMoreCounter = i;
+            break;
+        }
+        Measure measure = measuresToPrint[i];
+        time_t currTime = measure.measureTime;
+        if (currTime != 0) {
+            measuresString += measureToCsvString(measure);
+            i1++;
+        }
+    }
+    thereIsMore = i1 > HTTP_RESPONSE_CHUNKS_SIZE;
     return measuresString;
 }
 
@@ -189,64 +241,57 @@ Measure calculateMinuteAverage(time_t currentTime, int seconds, Measure measures
         Serial.print(" seconds average from next values:");
         Serial.println();
     }
-    float pm25Summ = 0, pm10Summ = 0, tempSumm = 0, humidSumm = 0;
-    int pm25Counter = 0, pm10Counter = 0, tempCounter = 0, humidCounter = 0;
+    float pm25Summ = 0, pm10Summ = 0, tempSumm = 0, rhSumm = 0;
+    int pm25Counter = 0, pm10Counter = 0, tempCounter = 0, rhCounter = 0;
     for (int i = 0; i < EVERY_MEASURES_NUMBER; i++) {
         Measure measure = measuresSource[i];
-        boolean b = false;
-        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.pm25 != -1) {
-            b = true;
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds)) {
+            if (measure.pm25 != -1) {
 //            if(DEBUG){ logAverage(measure); }
-            pm25Summ += measure.pm25;
-            pm25Counter++;
-        }
-        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.pm10 != -1) {
-            b = true;
+                pm25Summ += measure.pm25;
+                pm25Counter++;
+            }
+            if (measure.pm10 != -1) {
 //            if(DEBUG){ logAverage(measure); }
-            pm10Summ += measure.pm10;
-            pm10Counter++;
-        }
-        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.temp != -1) {
-            b = true;
-            if(DEBUG){ logAverage(measure); }
-            tempSumm += measure.temp;
-            tempCounter++;
-        }
-        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds) && measure.rh != -1) {
-            b = true;
+                pm10Summ += measure.pm10;
+                pm10Counter++;
+            }
+            if (measure.temp != -1) {
+                if(DEBUG){ logAverage(measure); }
+                tempSumm += measure.temp;
+                tempCounter++;
+            }
+            if (measure.rh != -1) {
 //            if(DEBUG){ logAverage(measure); }
-            humidSumm += measure.rh;
-            humidCounter++;
-        }
-        if (b && seconds == 15) {
-            totalAveragedCounter++;
+                rhSumm += measure.rh;
+                rhCounter++;
+            }
+
+            /*if (b && seconds == 15) {
+                totalAveragedCounter++;
+            }*/
         }
     }
-    Measure result;
+    Measure result = {
+            currentTime,
+            pm25Counter == 0 ? -1 : static_cast<float>(round(pm25Summ / pm25Counter * 10) / 10),
+            pm10Counter == 0 ? -1 : static_cast<float>(round(pm10Summ / pm10Counter * 10) / 10),
+            tempCounter == 0 ? -1 : static_cast<float>(round(tempSumm / tempCounter * 10) / 10),
+            rhCounter == 0 ? -1 : static_cast<float>(round(rhSumm / rhCounter * 10) / 10)
+    };
 
-    if(pm25Counter != 0 || pm10Counter != 0 || tempCounter != 0 || humidCounter != 0){
-        result = {
-                currentTime,
-                static_cast<float>(round(pm25Summ/pm25Counter*10)/10),
-                static_cast<float>(round(pm10Summ/pm10Counter*10)/10),
-                static_cast<float>(round(tempSumm/tempCounter*10)/10),
-                static_cast<float>(round(humidSumm/humidCounter*10)/10),
-        };
-
-        if(DEBUG){
-            Serial.println();
-            Serial.print("There were ");
-            Serial.print(pm25Counter);
-            Serial.print(" elements averaged.");
-            Serial.print(" Total averaged: ");
-            Serial.println(totalAveragedCounter);
-            Serial.print("Averaged measure: ");
-            Serial.println(measureToString(result));
-            Serial.println();
-        }
-    } else {
-        result = nullMeasure;
+    if (DEBUG) {
+        Serial.println();
+        Serial.print("There were ");
+        Serial.print(pm25Counter);
+        Serial.print(" elements averaged.");
+        Serial.print(" Total averaged: ");
+        Serial.println(totalAveragedCounter);
+        Serial.print("Averaged measure: ");
+        Serial.println(measureToString(result));
+        Serial.println();
     }
+
     return result;
 }
 
@@ -277,10 +322,6 @@ void connectToWifi(String ssid, String passPhrase, int maxRetry) {
 time_t rtcTime() {
     Time t = rtc.time();
     return makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});
-}
-
-float calculateAhHumidity(float t, float rh) {
-    return 6.112 * pow(2.71828, 17.67 * t / (243.5 + t)) * rh * 2.1674 / (273.15 + t);
 }
 
 void setup() {
@@ -366,11 +407,33 @@ void setup() {
         server.client().stop();
     });
 
+    server.on("/csv/1", []() {
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.send(200, "text/csv", "");
+        do {
+            String content = measuresToCsv(everyMeasures, EVERY_MEASURES_NUMBER);
+            server.sendContent(content);
+        } while(thereIsMore);
+        server.sendContent("");
+        server.client().stop();
+    });
+
     server.on("/15", []() {
         server.setContentLength(CONTENT_LENGTH_UNKNOWN);
         server.send(200, "text/html", "");
         do {
             String content = measuresToString(true, every15minutesMeasures, EVERY_15_MINUTES_MEASURES_NUMBER);
+            server.sendContent(content);
+        } while(thereIsMore);
+        server.sendContent("");
+        server.client().stop();
+    });
+
+    server.on("/csv/15", []() {
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.send(200, "text/csv", "");
+        do {
+            String content = measuresToCsv(every15minutesMeasures, EVERY_15_MINUTES_MEASURES_NUMBER);
             server.sendContent(content);
         } while(thereIsMore);
         server.sendContent("");
@@ -386,6 +449,31 @@ void setup() {
         } while(thereIsMore);
         server.sendContent("");
         server.client().stop();
+    });
+
+    server.on("/csv/60", []() {
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.send(200, "text/csv", "");
+        do {
+            String content = measuresToCsv(everyHourMeasures, EVERY_HOUR_MEASURES_NUMBER);
+            server.sendContent(content);
+        } while(thereIsMore);
+        server.sendContent("");
+        server.client().stop();
+    });
+
+    server.on("/setTime", HTTP_POST, []() {
+        String message = "";
+        int year = server.arg("year").toInt();
+        int month = server.arg("month").toInt();
+        int day = server.arg("day").toInt();
+        int hour = server.arg("hour").toInt();
+        int minute = server.arg("minute").toInt();
+        int second = server.arg("second").toInt();
+        //todo add handling weekdays
+        Time t1(year, month, day, hour, minute, second, Time::kMonday);
+        rtc.time(t1);
+        server.send(200, "text/plain", timeToString(rtcTime()));
     });
 
     server.begin();
@@ -446,9 +534,7 @@ void loop() {
                 pm25,
                 pm10,
                 isnan(tempEvent.temperature) ? -1 : tempEvent.temperature,
-                isnan(humidEvent.relative_humidity) ? -1 : humidEvent.relative_humidity,
-                isnan(humidEvent.relative_humidity) || isnan(tempEvent.temperature) ? -1 :
-                calculateAhHumidity(tempEvent.temperature, humidEvent.relative_humidity)
+                isnan(humidEvent.relative_humidity) ? -1 : humidEvent.relative_humidity
         };
 
         if (DEBUG) {
