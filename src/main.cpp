@@ -73,7 +73,7 @@ struct Measure hourlyMeasures[HOUR_AVG_MEASURES_NUMBER];
 int hourlyMeasuresIndex = -1;
 boolean hourlyMeasuresFirstPass = true;
 
-#define DAYLY_MEASURES_NUMBER 366
+#define DAYLY_MEASURES_NUMBER 14
 struct Measure daylyMeasures[DAYLY_MEASURES_NUMBER];
 int daylyMeasuresIndex = -1;
 boolean daylyMeasureFirstPass = true;
