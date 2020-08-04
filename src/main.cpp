@@ -33,6 +33,7 @@ const byte SENSOR_DX_PIN = 0;
 unsigned long int currentTimeMillisTimer = 0;
 byte step = 1;
 enum ContentType {HTML, CSV, TEXT};
+enum MeasureType {INSTANT, MINUTE, HOUR, DAY};
 MDNSResponder mdns;
 ESP8266WebServer server(80);
 SdsDustSensor sds(SENSOR_RX_PIN, SENSOR_DX_PIN);
@@ -57,21 +58,28 @@ const Measure nullMeasure = {0, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEA
                        NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, false, "null"};
 
 #define EVERY_MEASURES_NUMBER 180
-struct Measure everyMeasures[EVERY_MEASURES_NUMBER];
-int everyMeasureIndex = -1;
-boolean everyMeasureFirstPass = true;
+struct Measure instantMeasures[EVERY_MEASURES_NUMBER];
+int instantMeasureIndex = -1;
+boolean instantMeasureFirstPass = true;
 
-#define EVERY_15_MINUTES_MEASURES_NUMBER 4*24
-struct Measure every15minutesMeasures[EVERY_15_MINUTES_MEASURES_NUMBER];
-int every15MinutesMeasureIndex = -1;
-boolean every15MinutesMeasureFirstPass = true;
-byte last15MinuteAverageMinute = NULL_MEASURE_VALUE;
+#define MINUTES_AVG_MEASURES_NUMBER 4*24
+struct Measure every15minutesMeasures[MINUTES_AVG_MEASURES_NUMBER];
+int minutesAvgMeasureIndex = -1;
+boolean minutesAvgMeasureFirstPass = true;
+byte lastMinutesAverageMinute = NULL_MEASURE_VALUE;
 
-#define EVERY_HOUR_MEASURES_NUMBER 5*24
-struct Measure everyHourMeasures[EVERY_HOUR_MEASURES_NUMBER];
-int everyHourMeasureIndex = -1;
-boolean everyHourMeasureFirstPass = true;
+#define HOUR_AVG_MEASURES_NUMBER 5*24
+struct Measure hourlyMeasures[HOUR_AVG_MEASURES_NUMBER];
+int hourlyMeasuresIndex = -1;
+boolean hourlyMeasuresFirstPass = true;
+
+#define DAYLY_MEASURES_NUMBER 366
+struct Measure daylyMeasures[DAYLY_MEASURES_NUMBER];
+int daylyMeasuresIndex = -1;
+boolean daylyMeasureFirstPass = true;
+
 byte last1HourAverageHour = NULL_MEASURE_VALUE;
+byte last1DayAverageDay = NULL_MEASURE_VALUE;
 byte lastLogMinute = NULL_MEASURE_VALUE;
 
 int numberOfEveryMsrPlaced = 0;
@@ -79,6 +87,7 @@ int numberOf15mMsrPlaced = 0;
 int numberOf1hMsrPlaced = 0;
 int numberOf15mAveraged = 0;
 int numberOf1hAveraged = 0;
+int numberOfDayAveraged = 0;
 
 void resetTimer() {
     currentTimeMillisTimer = millis();
@@ -159,59 +168,69 @@ boolean isNullMeasure(const Measure& measure){
            && measure.inTemp == NULL_MEASURE_VALUE && measure.inRh == NULL_MEASURE_VALUE;
 }
 
-void putEveryMeasure(const Measure& measure){
+void placeMeasure(const Measure& measure, MeasureType measureType) {
     if (isNullMeasure(measure)) {
         return;
     }
-    numberOfEveryMsrPlaced++;
-    if (++everyMeasureIndex <= EVERY_MEASURES_NUMBER - 1 && everyMeasureFirstPass) {
-        everyMeasures[everyMeasureIndex] = measure;
-    } else {
-        for (int i1 = 1, i2 = 0; i1 < EVERY_MEASURES_NUMBER; i1++, i2++) {
-            // Shift all the array's content on one position
-            everyMeasures[i2] = everyMeasures[i1];
-        }
-        everyMeasures[EVERY_MEASURES_NUMBER - 1] = measure;
-        if (everyMeasureFirstPass) {
-            everyMeasureFirstPass = false;
-        }
+    int *index;
+    boolean *firstPass;
+    Measure *measuresArray;
+    int *measuresNumberPlaced;
+    int measuresNumber;
+    
+    switch (measureType) {
+        case INSTANT:
+            index = &instantMeasureIndex;
+            firstPass = &instantMeasureFirstPass;
+            measuresArray = instantMeasures;
+            measuresNumberPlaced = &numberOfEveryMsrPlaced;
+            measuresNumber = EVERY_MEASURES_NUMBER;
+            break;
+        case MINUTE:
+            Serial.println("MINUTE");
+            index = &minutesAvgMeasureIndex;
+            firstPass = &minutesAvgMeasureFirstPass;
+            measuresArray = every15minutesMeasures;
+            measuresNumberPlaced = &numberOf15mMsrPlaced;
+            measuresNumber = MINUTES_AVG_MEASURES_NUMBER;
+            break;
+        case HOUR:
+            Serial.println("HOUR");
+            index = &hourlyMeasuresIndex;
+            firstPass = &hourlyMeasuresFirstPass;
+            measuresArray = hourlyMeasures;
+            measuresNumberPlaced = &numberOf1hMsrPlaced;
+            measuresNumber = HOUR_AVG_MEASURES_NUMBER;
+            break;
+        case DAY:
+            Serial.println("DAY");
+            index = &daylyMeasuresIndex;
+            firstPass = &daylyMeasureFirstPass;
+            measuresArray = daylyMeasures;
+            measuresNumberPlaced = &numberOfDayAveraged;
+            measuresNumber = DAYLY_MEASURES_NUMBER;
+            break;
+        default:
+            Serial.println("default");
+            index = &instantMeasureIndex;
+            firstPass = &instantMeasureFirstPass;
+            measuresArray = instantMeasures;
+            measuresNumberPlaced = &numberOfEveryMsrPlaced;
+            measuresNumber = EVERY_MEASURES_NUMBER;
+            break;
     }
-}
 
-void putEvery15MinuteMeasure(const Measure& measure){
-    if (isNullMeasure(measure)) {
-        return;
-    }
-    numberOf15mMsrPlaced++;
-    if (++every15MinutesMeasureIndex <= EVERY_15_MINUTES_MEASURES_NUMBER - 1 && every15MinutesMeasureFirstPass) {
-        every15minutesMeasures[every15MinutesMeasureIndex] = measure;
+    (*measuresNumberPlaced)++;
+    if (++(*index) <= measuresNumber - 1 && *firstPass) {
+        measuresArray[(*index)] = measure;
     } else {
-        for (int i1 = 1, i2 = 0; i1 < EVERY_15_MINUTES_MEASURES_NUMBER; i1++, i2++) {
+        for (int i1 = 1, i2 = 0; i1 < measuresNumber; i1++, i2++) {
             // Shift all the array's content on one position
-            every15minutesMeasures[i2] = every15minutesMeasures[i1];
+            measuresArray[i2] = measuresArray[i1];
         }
-        every15minutesMeasures[EVERY_15_MINUTES_MEASURES_NUMBER - 1] = measure;
-        if (every15MinutesMeasureFirstPass) {
-            every15MinutesMeasureFirstPass = false;
-        }
-    }
-}
-
-void putEveryHourMeasure(const Measure& measure){
-    if (isNullMeasure(measure)) {
-        return;
-    }
-    numberOf1hMsrPlaced++;
-    if (++everyHourMeasureIndex <= EVERY_HOUR_MEASURES_NUMBER - 1 && everyHourMeasureFirstPass) {
-        everyHourMeasures[everyHourMeasureIndex] = measure;
-    } else {
-        for (int i1 = 1, i2 = 0; i1 < EVERY_HOUR_MEASURES_NUMBER; i1++, i2++) {
-            // Shift all the array's content on one position
-            everyHourMeasures[i2] = everyHourMeasures[i1];
-        }
-        everyHourMeasures[EVERY_HOUR_MEASURES_NUMBER - 1] = measure;
-        if (everyHourMeasureFirstPass) {
-            everyHourMeasureFirstPass = false;
+        measuresArray[measuresNumber - 1] = measure;
+        if (*firstPass) {
+            *firstPass = false;
         }
     }
 }
@@ -443,28 +462,28 @@ void sendChunkedContent(Measure *measures, int measuresSize, ContentType content
 
 void configureHttpServer() {
     server.on("/1", []() {
-        sendChunkedContent(everyMeasures, EVERY_MEASURES_NUMBER, HTML);
+        sendChunkedContent(instantMeasures, EVERY_MEASURES_NUMBER, HTML);
     });
 
     server.on("/csv/1", []() {
-        sendChunkedContent(everyMeasures, EVERY_MEASURES_NUMBER, CSV);
+        sendChunkedContent(instantMeasures, EVERY_MEASURES_NUMBER, CSV);
     });
 
     server.on("/15", []() {
-        sendChunkedContent(every15minutesMeasures, EVERY_15_MINUTES_MEASURES_NUMBER, HTML);
+        sendChunkedContent(every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, HTML);
     });
 
     server.on("/csv/15", []() {
-        sendChunkedContent(every15minutesMeasures, EVERY_15_MINUTES_MEASURES_NUMBER, CSV);
+        sendChunkedContent(every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, CSV);
 
     });
 
     server.on("/60", []() {
-        sendChunkedContent(everyHourMeasures, EVERY_HOUR_MEASURES_NUMBER, HTML);
+        sendChunkedContent(hourlyMeasures, HOUR_AVG_MEASURES_NUMBER, HTML);
     });
 
     server.on("/csv/60", []() {
-        sendChunkedContent(everyHourMeasures, EVERY_HOUR_MEASURES_NUMBER, CSV);
+        sendChunkedContent(hourlyMeasures, HOUR_AVG_MEASURES_NUMBER, CSV);
     });
 
     server.on("/setTime", HTTP_POST, []() {
@@ -479,7 +498,7 @@ void configureHttpServer() {
         setTime(hour, minute, second, day, month, year);
         resetTimer();
         last1HourAverageHour = hour;
-        last15MinuteAverageMinute = minute;
+        lastMinutesAverageMinute = minute;
         server.send(200, "text/plain", timeToString(rtcTime()));
     });
 
@@ -573,13 +592,13 @@ void setup() {
 
     resetTimer();
 
-    for (auto &reading : everyMeasures) {
+    for (auto &reading : instantMeasures) {
         reading = nullMeasure;
     }
     for (auto &reading : every15minutesMeasures) {
         reading = nullMeasure;
     }
-    for (auto &reading : everyHourMeasures) {
+    for (auto &reading : hourlyMeasures) {
         reading = nullMeasure;
     }
     if (DEBUG) {
@@ -600,6 +619,7 @@ void loop() {
     time_t currentTime = rtcTime();
     byte currentMinute = minute(currentTime);
     byte currentHour = hour(currentTime);
+    byte currentDay = day(currentTime);
 
     /*if (DEBUG_CASE2 && (millis() / 1000) % 300 == 0 && currentMinute != lastLogMinute) {
         lastLogMinute = currentMinute;
@@ -607,24 +627,28 @@ void loop() {
         Serial.print(currentMinute);
         Serial.print(", currentHour: ");
         Serial.print(currentHour);
-        Serial.print(", last15MinuteAverageMinute: ");
-        Serial.print(last15MinuteAverageMinute);
+        Serial.print(", lastMinutesAverageMinute: ");
+        Serial.print(lastMinutesAverageMinute);
         Serial.print(", last1HourAverageHour: ");
         Serial.println(last1HourAverageHour);
     }*/
 
-    if (currentMinute % period15m == 0 && currentMinute != last15MinuteAverageMinute) {
-        last15MinuteAverageMinute = currentMinute;
-        putEvery15MinuteMeasure(
-                calculateAverage(currentTime, period15m * 60, everyMeasures, EVERY_MEASURES_NUMBER)
-                );
+    if (currentMinute % period15m == 0 && currentMinute != lastMinutesAverageMinute) {
+        lastMinutesAverageMinute = currentMinute;
+        const Measure &measure = calculateAverage(currentTime, period15m * 60, instantMeasures, EVERY_MEASURES_NUMBER);
+        placeMeasure(measure, MINUTE);
     }
 
     if (currentHour % period1h == 0 && currentHour != last1HourAverageHour) {
         last1HourAverageHour = currentHour;
-        putEveryHourMeasure(
-                calculateAverage(currentTime, period1h * 3600, every15minutesMeasures, EVERY_15_MINUTES_MEASURES_NUMBER)
-                );
+        const Measure &measure = calculateAverage(currentTime, period1h * 3600, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER);
+        placeMeasure(measure, HOUR);
+    }
+
+    if (currentDay != last1DayAverageDay) {
+        last1DayAverageDay = currentDay;
+        const Measure &measure = calculateAverage(currentTime, 24 * 3600, hourlyMeasures, HOUR_AVG_MEASURES_NUMBER);
+        placeMeasure(measure, DAY);
     }
 
     server.handleClient();
@@ -683,7 +707,7 @@ void loop() {
         };
         strcpy(currentMeasure.serviceInfo, serviceInfo);
 
-        putEveryMeasure(currentMeasure);
+        placeMeasure(currentMeasure, INSTANT);
 
         if (DEBUG_CASE2) {
             Serial.print(numberOfEveryMsrPlaced); Serial.print(". Got a measure: "); printMeasure(currentMeasure);
