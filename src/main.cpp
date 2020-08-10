@@ -8,6 +8,7 @@
 #include <../lib/DHT-sensor-library-master/DHT.h>
 #include <../lib/DHT-sensor-library-master/DHT_U.h>
 #include <ESP8266HTTPClient.h>
+#include <../lib/eeprom_rotate-master/src/EEPROM_Rotate.h>
 
 #define WIFI_MAX_RETRIES 40
 #define DEFAULT_MEASURING_DURATION 5*1000
@@ -21,13 +22,22 @@ unsigned sleepingPeriod;
 byte period15m;
 byte period1h;
 #define HTTP_RESPONSE_CHUNKS_SIZE 20
-#define MAX_MEASURES_STRING_LENGTH 150
-#define NULL_MEASURE_VALUE -100
+#define MAX_MEASURES_STRING_LENGTH 170
+#define NULL_MEASURE_VALUE -10000
 const boolean DEBUG = false;
 const boolean DEBUG_CASE2 = true;
 #define DHT21_ROOF_PIN 12
 #define DHT21_WINDOW_PIN 4
 #define DHT22_LIVING_ROOM_PIN 13
+
+#define EEPROM_DAILY_STORED_MEASURES_NUMBER 3
+#define EEPROM_HOURLY_STORED_MEASURES_NUMBER 24
+#define EEPROM_DAILY_MEASURES_OFFSET 256
+#define EEPROM_HOURLY_MEASURES_OFFSET 2847
+#define EEPROM_DAILY_CURSOR_POSITION_ADDRESS 10
+const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
+const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
+
 const byte SENSOR_RX_PIN = 2;
 const byte SENSOR_DX_PIN = 0;
 unsigned long int currentTimeMillisTimer = 0;
@@ -41,24 +51,43 @@ DHT_Unified dht21Roof(DHT21_ROOF_PIN, DHT21);
 DHT_Unified dht21Window(DHT21_WINDOW_PIN, DHT21);
 DHT_Unified dht22LivingRoom(DHT22_LIVING_ROOM_PIN, DHT22);
 const char csvHeader[] = "date, pm2.5, pm10, inTemp, inRH, inAH, outTemp, outRH, outAH\n";
+EEPROM_Rotate EEPROMr;
 
 struct Measure {
     time_t measureTime;
-    float pm25;
-    float pm10;
-    float outTemp;
-    float outRh;
-    float inTemp;
-    float inRh;
+    signed short int pm25;
+    signed short int pm10;
+    signed short int outTemp;
+    signed short int minOutTemp;
+    signed short int maxOutTemp;
+    signed short int outRh;
+    signed short int inTemp;
+    signed short int inRh;
     boolean window;
     char serviceInfo[20];
 };
+struct SimpleMeasure {
+    time_t measureTime;
+    signed short int pm25;
+    signed short int pm10;
+    signed short int outTemp;
+    signed short int minOutTemp;
+    signed short int maxOutTemp;
+    signed short int outRh;
+    signed short int inTemp;
+    signed short int inRh;
+};
+
+const byte MEASURE_SIZE = sizeof(Measure);
+const byte SIMPLE_MEASURE_SIZE = sizeof(SimpleMeasure);
 
 const Measure nullMeasure = {0, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE,
-                       NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, false, "null"};
+                       NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, false, "null"};
+const SimpleMeasure nullSMeasure = {0, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE,
+                             NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE};
 
-#define EVERY_MEASURES_NUMBER 180
-struct Measure instantMeasures[EVERY_MEASURES_NUMBER];
+#define INSTANT_MEASURES_NUMBER 180
+struct Measure instantMeasures[INSTANT_MEASURES_NUMBER];
 int instantMeasureIndex = -1;
 boolean instantMeasureFirstPass = true;
 
@@ -66,20 +95,21 @@ boolean instantMeasureFirstPass = true;
 struct Measure every15minutesMeasures[MINUTES_AVG_MEASURES_NUMBER];
 int minutesAvgMeasureIndex = -1;
 boolean minutesAvgMeasureFirstPass = true;
-byte lastMinutesAverageMinute = NULL_MEASURE_VALUE;
 
 #define HOUR_AVG_MEASURES_NUMBER 5*24
 struct Measure hourlyMeasures[HOUR_AVG_MEASURES_NUMBER];
 int hourlyMeasuresIndex = -1;
 boolean hourlyMeasuresFirstPass = true;
 
-#define DAYLY_MEASURES_NUMBER 14
-struct Measure daylyMeasures[DAYLY_MEASURES_NUMBER];
-int daylyMeasuresIndex = -1;
-boolean daylyMeasureFirstPass = true;
+#define DAILY_MEASURES_NUMBER 31
+struct Measure dailyMeasures[DAILY_MEASURES_NUMBER];
+int dailyMeasuresIndex = -1;
+boolean dailyMeasureFirstPass = true;
 
+byte lastMinutesAverageMinute = NULL_MEASURE_VALUE;
 byte last1HourAverageHour = NULL_MEASURE_VALUE;
 byte last1DayAverageDay = NULL_MEASURE_VALUE;
+
 byte lastLogMinute = NULL_MEASURE_VALUE;
 
 int numberOfEveryMsrPlaced = 0;
@@ -91,11 +121,15 @@ int numberOfDayAveraged = 0;
 
 void resetTimer() {
     currentTimeMillisTimer = millis();
+    time_t time = now();
+    lastMinutesAverageMinute = minute(time);
+    last1HourAverageHour = hour(time);
+    last1DayAverageDay = day(time);
 }
 
 char* getTimeString(time_t time) {
-    static char measureString[10];
-    snprintf(measureString, 10, "%02d:%02d:%02d", hour(time), minute(time), second(time));
+    static char measureString[20];
+    snprintf(measureString, 20, "%02d/%02d/%d %02d:%02d:%02d", day(time), month(time), year(time), hour(time), minute(time), second(time));
     return measureString;
 }
 
@@ -105,24 +139,41 @@ float calculateAbsoluteHumidity(float temp, float rh) {
 
 char* measureToString(Measure measure) {
     static char measureString[MAX_MEASURES_STRING_LENGTH];
-    snprintf(measureString, MAX_MEASURES_STRING_LENGTH, "%02d/%02d/%d %02d:%02d:%02d - PM2.5 = %.1f, PM10 = %.1f, IN[%.1fC-%.0f%%-%.1fg/m3], OUT[%.1fC%s-%.0f%%-%.1fg/m3]",
-             day(measure.measureTime),
-             month(measure.measureTime),
-             year(measure.measureTime),
-             hour(measure.measureTime),
-             minute(measure.measureTime),
-             second(measure.measureTime),
-             measure.pm25,
-             measure.pm10,
-             measure.inTemp,
-             measure.inRh,
-             measure.inTemp == NULL_MEASURE_VALUE || measure.inRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE : calculateAbsoluteHumidity(measure.inTemp, measure.inRh),
-             measure.outTemp,
+    snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
+             "%s - PM2.5 = %.1f, PM10 = %.1f, IN[%.1fC-%.0f%%-%.1fg/m3], OUT[%.1fC%s-%.0f%%-%.1fg/m3, min=%.1fC, max=%.1fC]",
+             getTimeString(measure.measureTime),
+             round((float) measure.pm25 / 10) / 10,
+             round((float) measure.pm10 / 10) / 10,
+             round((float) measure.inTemp / 10) / 10,
+             round((float) measure.inRh / 10) / 10,
+             measure.inTemp == NULL_MEASURE_VALUE || measure.inRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE
+                              : round(calculateAbsoluteHumidity(measure.inTemp/100, measure.inRh/100)*100)/100,
+             round((float) measure.outTemp / 10) / 10,
              measure.serviceInfo,
-             measure.outRh,
-             measure.outTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE : calculateAbsoluteHumidity(measure.outTemp, measure.outRh)
+             round((float) measure.outRh / 10) / 10,
+             measure.outTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE
+                               : round(calculateAbsoluteHumidity(measure.outTemp/100, measure.outRh/100)*100)/100,
+             round((float) measure.minOutTemp / 10) / 10,
+             round((float) measure.maxOutTemp / 10) / 10
     );
     return measureString;
+}
+
+char* measureToString(SimpleMeasure measure) {
+    Measure measure1 = {
+            measure.measureTime,
+            measure.pm25,
+            measure.pm10,
+            measure.outTemp,
+            measure.minOutTemp,
+            measure.maxOutTemp,
+            measure.outRh,
+            measure.inTemp,
+            measure.inRh,
+            false,
+            ""
+    };
+    return measureToString(measure1);
 }
 
 char* timeToString(time_t t){
@@ -146,14 +197,16 @@ char* measureToCsvString(Measure measure) {
              hour(measure.measureTime),
              minute(measure.measureTime),
              second(measure.measureTime),
-             measure.pm25,
-             measure.pm10,
-             measure.inTemp,
-             measure.inRh,
-             measure.inTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE : calculateAbsoluteHumidity(measure.outTemp, measure.outRh),
-             measure.outTemp,
-             measure.outRh,
-             measure.outTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE : calculateAbsoluteHumidity(measure.outTemp, measure.outRh)
+             round((float) measure.pm25 / 10) / 10,
+             round((float) measure.pm10 / 10) / 10,
+             round((float) measure.inTemp / 10) / 10,
+             round((float) measure.inRh / 10) / 10,
+             measure.inTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE :
+             round(calculateAbsoluteHumidity(measure.outTemp/100, measure.outRh/100)*100),
+             round((float) measure.outTemp / 10) / 10,
+             round((float) measure.outRh / 10) / 10,
+             measure.outTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE ? NULL_MEASURE_VALUE :
+             round(calculateAbsoluteHumidity(measure.outTemp/100, measure.outRh/100)*100)
     );
     return measureString;
 }
@@ -164,7 +217,7 @@ void printMeasure(Measure measure) {
 
 boolean isNullMeasure(const Measure& measure){
     return measure.pm10 == NULL_MEASURE_VALUE && measure.pm25 == NULL_MEASURE_VALUE && measure.pm10 == NULL_MEASURE_VALUE
-           && measure.outTemp == NULL_MEASURE_VALUE && measure.outRh == NULL_MEASURE_VALUE
+           && measure.outTemp == NULL_MEASURE_VALUE && measure.minOutTemp == NULL_MEASURE_VALUE && measure.maxOutTemp == NULL_MEASURE_VALUE && measure.outRh == NULL_MEASURE_VALUE
            && measure.inTemp == NULL_MEASURE_VALUE && measure.inRh == NULL_MEASURE_VALUE;
 }
 
@@ -184,10 +237,9 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
             firstPass = &instantMeasureFirstPass;
             measuresArray = instantMeasures;
             measuresNumberPlaced = &numberOfEveryMsrPlaced;
-            measuresNumber = EVERY_MEASURES_NUMBER;
+            measuresNumber = INSTANT_MEASURES_NUMBER;
             break;
         case MINUTE:
-            Serial.println("MINUTE");
             index = &minutesAvgMeasureIndex;
             firstPass = &minutesAvgMeasureFirstPass;
             measuresArray = every15minutesMeasures;
@@ -195,7 +247,6 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
             measuresNumber = MINUTES_AVG_MEASURES_NUMBER;
             break;
         case HOUR:
-            Serial.println("HOUR");
             index = &hourlyMeasuresIndex;
             firstPass = &hourlyMeasuresFirstPass;
             measuresArray = hourlyMeasures;
@@ -203,20 +254,18 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
             measuresNumber = HOUR_AVG_MEASURES_NUMBER;
             break;
         case DAY:
-            Serial.println("DAY");
-            index = &daylyMeasuresIndex;
-            firstPass = &daylyMeasureFirstPass;
-            measuresArray = daylyMeasures;
+            index = &dailyMeasuresIndex;
+            firstPass = &dailyMeasureFirstPass;
+            measuresArray = dailyMeasures;
             measuresNumberPlaced = &numberOfDayAveraged;
-            measuresNumber = DAYLY_MEASURES_NUMBER;
+            measuresNumber = DAILY_MEASURES_NUMBER;
             break;
         default:
-            Serial.println("default");
             index = &instantMeasureIndex;
             firstPass = &instantMeasureFirstPass;
             measuresArray = instantMeasures;
             measuresNumberPlaced = &numberOfEveryMsrPlaced;
-            measuresNumber = EVERY_MEASURES_NUMBER;
+            measuresNumber = INSTANT_MEASURES_NUMBER;
             break;
     }
 
@@ -232,6 +281,41 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
         if (*firstPass) {
             *firstPass = false;
         }
+    }
+
+    if (measureType == DAY) {
+        int currentIndex;
+        EEPROMr.get(EEPROM_DAILY_CURSOR_POSITION_ADDRESS, currentIndex);
+        Serial.print("Daily index from EEPROM: ");
+        Serial.println(currentIndex);
+        if (currentIndex > EEPROM_DAILY_STORED_MEASURES_NUMBER - 1 || currentIndex < 0) {
+            currentIndex = 0;
+        }
+        SimpleMeasure simpleMeasure = {
+                measure.measureTime, measure.pm25, measure.pm10, measure.outTemp, measure.minOutTemp,
+                measure.maxOutTemp, measure.outRh, measure.inTemp, measure.inRh
+        };
+        size_t address = EEPROM_DAILY_MEASURES_OFFSET + currentIndex * SIMPLE_MEASURE_SIZE;
+        Serial.print("Writing a daily measure to a next address: ");
+        Serial.println(address);
+        EEPROMr.put(address, simpleMeasure);
+        EEPROMr.put(EEPROM_DAILY_CURSOR_POSITION_ADDRESS, ++currentIndex);
+        EEPROMr.commit();
+    } else if (measureType == HOUR) {
+        int currentIndex;
+        EEPROMr.get(EEPROM_HOURLY_CURSOR_POSITION_ADDRESS, currentIndex);
+        Serial.print("Hourly index from EEPROM: ");
+        Serial.println(currentIndex);
+        if (currentIndex > EEPROM_HOURLY_STORED_MEASURES_NUMBER - 1 || currentIndex < 0) {
+            currentIndex = 0;
+        }
+        size_t address = EEPROM_HOURLY_MEASURES_OFFSET + currentIndex * MEASURE_SIZE;
+        Serial.print("Writing a hourly measure to a next address: ");
+        Serial.println(address);
+        EEPROMr.put(address, measure);
+        EEPROMr.put(EEPROM_HOURLY_CURSOR_POSITION_ADDRESS, ++currentIndex);
+        EEPROMr.commit();
+
     }
 }
 
@@ -253,7 +337,8 @@ bool isInIntervalOfSeconds(time_t currentTime, time_t measureTime, long interval
         Serial.print(intervalSec);
         Serial.print("), ");
     }*/
-    return currTimeTS - measureTs < intervalSec;
+    long diff = currTimeTS - measureTs;
+    return diff > 0 && diff <= intervalSec;
 }
 
 void logAverage(const Measure &measure) {
@@ -287,14 +372,22 @@ Measure calculateAverage(time_t currentTime, int seconds, Measure* measuresSourc
         Serial.print(" seconds average from next values:");
         Serial.println();
     }
-    float pm25Sum = 0, pm10Sum = 0, outTempSum = 0, outRhSum = 0, inTempSum = 0, inRhSum = 0;
+    int pm25Sum = 0, pm10Sum = 0, outTempSum = 0, outRhSum = 0, inTempSum = 0, inRhSum = 0;
     int pm25Counter = 0, pm10Counter = 0, outTempCounter = 0, outRhCounter = 0, inTempCounter = 0, inRhCounter = 0,
     windowCounter = 0, measurementsCounter = 0;
+    signed short int minTemp = 32767;
+    signed short int maxTemp = -32768;
     for (int i = 0; i < measurementArraySize; i++) {
         Measure measure = measuresSource[i];
         if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds)) {
             measurementsCounter++;
             if(DEBUG_CASE2){ logAverage(measure); }
+            if (measure.minOutTemp != NULL_MEASURE_VALUE && measure.minOutTemp < minTemp) {
+                minTemp = measure.minOutTemp;
+            }
+            if (measure.maxOutTemp != NULL_MEASURE_VALUE && measure.maxOutTemp > maxTemp) {
+                maxTemp = measure.maxOutTemp;
+            }
             if (measure.pm25 != NULL_MEASURE_VALUE) {
                 pm25Sum += measure.pm25;
                 pm25Counter++;
@@ -329,15 +422,22 @@ Measure calculateAverage(time_t currentTime, int seconds, Measure* measuresSourc
     }
     bool window = outTempCounter <= 0 ? true : ((float) windowCounter / (float) outTempCounter > 0.5);
     Measure result = {
-            currentTime,
-            pm25Counter == 0 ? NULL_MEASURE_VALUE : static_cast<float>(round(pm25Sum / pm25Counter * 10) / 10),
-            pm10Counter == 0 ? NULL_MEASURE_VALUE : static_cast<float>(round(pm10Sum / pm10Counter * 10) / 10),
-            outTempCounter == 0 ? NULL_MEASURE_VALUE : static_cast<float>(round(outTempSum / outTempCounter * 10) / 10),
-            outRhCounter == 0 ? NULL_MEASURE_VALUE : static_cast<float>(round(outRhSum / outRhCounter * 10) / 10),
-            inTempCounter == 0 ? NULL_MEASURE_VALUE : static_cast<float>(round(inTempSum / inTempCounter * 10) / 10),
-            inRhCounter == 0 ? NULL_MEASURE_VALUE : static_cast<float>(round(inRhSum / inRhCounter * 10) / 10),
+            currentTime - seconds,
+            static_cast<short>(pm25Counter == 0 ? NULL_MEASURE_VALUE : pm25Sum / pm25Counter),
+            static_cast<short>(pm10Counter == 0 ? NULL_MEASURE_VALUE : pm10Sum / pm10Counter),
+            static_cast<short>(outTempCounter == 0 ? NULL_MEASURE_VALUE : outTempSum / outTempCounter),
+            minTemp,
+            maxTemp,
+            static_cast<short>(outRhCounter == 0 ? NULL_MEASURE_VALUE : outRhSum / outRhCounter),
+            static_cast<short>(inTempCounter == 0 ? NULL_MEASURE_VALUE : inTempSum / inTempCounter),
+            static_cast<short>(inRhCounter == 0 ? NULL_MEASURE_VALUE : inRhSum / inRhCounter),
             window
     };
+
+    if (seconds == 24 * 3600 && measurementsCounter != 24) {
+        Serial.printf("Not enough measures for daily average %d", measurementsCounter);
+        result = nullMeasure;
+    }
 
     if (window) {
         strcpy(result.serviceInfo, "(W)");
@@ -410,9 +510,11 @@ time_t rtcTime() {
 
 void syncTime() {
     HTTPClient http;
-    http.begin("http://worldtimeapi.org/api/timezone/Europe/Kiev.txt");
+    Serial.print("Getting current time from ");
+    Serial.println(TIME_API_URL);
+    http.begin(TIME_API_URL);
     int httpCode = http.GET();
-    if (httpCode > 0) {
+    if (httpCode == 200) {
         String payload = http.getString();
         std::string timePayload = payload.c_str();
         unsigned int timePosition = timePayload.find("unixtime: ");
@@ -420,15 +522,65 @@ void syncTime() {
         String a = unixTime.c_str();
         Serial.println(payload);
         setTime((time_t)a.toInt() + 3 * 3600);
+        Serial.print("Time synced. Current time is ");
+        Serial.println(timeToString(rtcTime()));
+        http.end();   //Close connection
+    } else {
+        Serial.print("Time syncing failed. Server respond with next code: ");
+        Serial.println(httpCode);
     }
-    Serial.print("Time synced. Current time is ");
-    Serial.println(timeToString(rtcTime()));
-    http.end();   //Close connection
 }
 
-void sendChunkedContent(Measure *measures, int measuresSize, ContentType contentType) {
+void sendChunkedContent(Measure *measures, int measuresSize, ContentType contentType, boolean eeprom) {
     static const char br[5] = "<br>";
     static char cont[MAX_MEASURES_STRING_LENGTH * HTTP_RESPONSE_CHUNKS_SIZE] = "";
+    Measure *currMeasures;
+    if (eeprom) {
+        static Measure readMeasures[EEPROM_DAILY_STORED_MEASURES_NUMBER];
+        measuresSize = EEPROM_DAILY_STORED_MEASURES_NUMBER;
+        int currentIndex;
+        EEPROMr.get(EEPROM_DAILY_CURSOR_POSITION_ADDRESS, currentIndex);
+        Serial.print("Daily index from EEPROM: ");
+        Serial.println(currentIndex);
+        if (currentIndex > EEPROM_DAILY_STORED_MEASURES_NUMBER - 1 || currentIndex < 0) {
+            currentIndex = 0;
+        }
+
+        Serial.println("Reading the daily measures from EEPROM ...\n");
+
+        for (int i = 0; i < EEPROM_DAILY_STORED_MEASURES_NUMBER; i++) {
+            if (currentIndex > EEPROM_DAILY_STORED_MEASURES_NUMBER - 1) {
+                currentIndex = 0;
+            }
+            SimpleMeasure measure;
+            size_t address = EEPROM_DAILY_MEASURES_OFFSET + currentIndex++ * SIMPLE_MEASURE_SIZE;
+            Serial.print("Trying to get a daily measure from the next address: ");
+            Serial.print(address);
+            Serial.print(", index was: ");
+            Serial.println(currentIndex - 1);
+
+            EEPROMr.get(address, measure);
+            Measure measure1 = {
+                    measure.measureTime,
+                    measure.pm25,
+                    measure.pm10,
+                    measure.outTemp,
+                    measure.minOutTemp,
+                    measure.maxOutTemp,
+                    measure.outRh,
+                    measure.inTemp,
+                    measure.inRh,
+                    false,
+                    ""
+            };
+            readMeasures[i] = measure1;
+            Serial.println(measureToString(measure));
+        }
+        Serial.println(); Serial.println();
+        currMeasures = readMeasures;
+    } else{
+        currMeasures = measures;
+    }
 
     server.setContentLength(CONTENT_LENGTH_UNKNOWN);
     server.send(200, "text/html", "");
@@ -439,11 +591,11 @@ void sendChunkedContent(Measure *measures, int measuresSize, ContentType content
         strcpy(cont, contentType == CSV && !anyDataHasBeenSent ? csvHeader : "");
         boolean thereIsData = false;
         for (int i = 0 ; i < HTTP_RESPONSE_CHUNKS_SIZE && currentMeasureIndex >= 0; i++) {
-            if(!isNullMeasure(measures[currentMeasureIndex])){
+            if(!isNullMeasure(currMeasures[currentMeasureIndex])){
                 thereIsData = anyDataHasBeenSent = true;
                 strcat(
-                        cont, contentType == CSV ? measureToCsvString(measures[currentMeasureIndex]) :
-                        measureToString(measures[currentMeasureIndex])
+                        cont, contentType == CSV ? measureToCsvString(currMeasures[currentMeasureIndex]) :
+                        measureToString(currMeasures[currentMeasureIndex])
                 );
                 if (contentType == HTML) {
                     strcat(cont, br);
@@ -460,30 +612,68 @@ void sendChunkedContent(Measure *measures, int measuresSize, ContentType content
     server.client().stop();
 }
 
+void clearEeprom(){
+    int currentIndex = 0;
+    Serial.print("Daily index from EEPROM: ");
+    Serial.println(currentIndex);
+
+    for(;currentIndex < EEPROM_DAILY_STORED_MEASURES_NUMBER; currentIndex++){
+        size_t address = EEPROM_DAILY_MEASURES_OFFSET + currentIndex * SIMPLE_MEASURE_SIZE;
+        Serial.print("Writing a daily measure to a next address: ");
+        Serial.println(address);
+        EEPROMr.put(address, nullSMeasure);
+    }
+
+    currentIndex = 0;
+
+    for(;currentIndex < EEPROM_HOURLY_STORED_MEASURES_NUMBER; currentIndex++){
+        size_t address = EEPROM_HOURLY_MEASURES_OFFSET + currentIndex * MEASURE_SIZE;
+        Serial.print("Writing a daily measure to a next address: ");
+        Serial.println(address);
+        EEPROMr.put(address, nullMeasure);
+    }
+
+    EEPROMr.commit();
+}
+
 void configureHttpServer() {
-    server.on("/1", []() {
-        sendChunkedContent(instantMeasures, EVERY_MEASURES_NUMBER, HTML);
+
+    server.on("/restart", []() {
+        ESP.restart();
+        server.send(200, "text/html", "OK");
+    });
+
+    server.on("/eeprom/clear", []() {
+        clearEeprom();
+        server.send(200, "text/html", "OK");
+    });
+
+    server.on("/instant", []() {
+        sendChunkedContent(instantMeasures, INSTANT_MEASURES_NUMBER, HTML, false);
+    });
+
+    server.on("/avg/minute", []() {
+        sendChunkedContent(every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, HTML, false);
+    });
+
+    server.on("/avg/hourly", []() {
+        sendChunkedContent(hourlyMeasures, HOUR_AVG_MEASURES_NUMBER, HTML, false);
+    });
+
+    server.on("/avg/daily", []() {
+        sendChunkedContent(instantMeasures, INSTANT_MEASURES_NUMBER, HTML, true);
     });
 
     server.on("/csv/1", []() {
-        sendChunkedContent(instantMeasures, EVERY_MEASURES_NUMBER, CSV);
-    });
-
-    server.on("/15", []() {
-        sendChunkedContent(every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, HTML);
+        sendChunkedContent(instantMeasures, INSTANT_MEASURES_NUMBER, CSV, false);
     });
 
     server.on("/csv/15", []() {
-        sendChunkedContent(every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, CSV);
-
-    });
-
-    server.on("/60", []() {
-        sendChunkedContent(hourlyMeasures, HOUR_AVG_MEASURES_NUMBER, HTML);
+        sendChunkedContent(every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, CSV, false);
     });
 
     server.on("/csv/60", []() {
-        sendChunkedContent(hourlyMeasures, HOUR_AVG_MEASURES_NUMBER, CSV);
+        sendChunkedContent(hourlyMeasures, HOUR_AVG_MEASURES_NUMBER, CSV, false);
     });
 
     server.on("/setTime", HTTP_POST, []() {
@@ -592,15 +782,56 @@ void setup() {
 
     resetTimer();
 
+    EEPROMr.size(4);
+    EEPROMr.begin(4 * 1024);
+
     for (auto &reading : instantMeasures) {
         reading = nullMeasure;
     }
     for (auto &reading : every15minutesMeasures) {
         reading = nullMeasure;
     }
-    for (auto &reading : hourlyMeasures) {
-        reading = nullMeasure;
+
+    Serial.print("Size of Measure: ");
+    Serial.print(MEASURE_SIZE);
+    Serial.print(" bytes\nSize of SimpleMeasure: ");
+    Serial.print(SIMPLE_MEASURE_SIZE);
+    Serial.print(" bytes\n");
+
+    int currentIndex;
+    EEPROMr.get(EEPROM_HOURLY_CURSOR_POSITION_ADDRESS, currentIndex);
+    if (currentIndex > EEPROM_HOURLY_STORED_MEASURES_NUMBER - 1 || currentIndex < 0) {
+        currentIndex = 0;
     }
+
+    Serial.println("Populating an initial collection with the hourly measures from EEPROM ...");
+    //CONSTRAINT:  HOUR_AVG_MEASURES_NUMBER MUST BE GREATER THAN EEPROM_HOURLY_STORED_MEASURES_NUMBER
+    for (int i1 = 0, i2 = HOUR_AVG_MEASURES_NUMBER - EEPROM_HOURLY_STORED_MEASURES_NUMBER; i1 < EEPROM_HOURLY_STORED_MEASURES_NUMBER; i1++, i2++) {
+        if (currentIndex > EEPROM_HOURLY_STORED_MEASURES_NUMBER - 1) {
+            currentIndex = 0;
+        }
+        Measure measure;
+        size_t address = EEPROM_HOURLY_MEASURES_OFFSET + currentIndex++ * MEASURE_SIZE;
+        Serial.print(i1);
+        Serial.print(". Cursor position: ");
+        Serial.print(currentIndex - 1);
+        Serial.print(", byte address: ");
+        Serial.print(address);
+
+        EEPROMr.get(address, measure);
+        hourlyMeasures[i2] = measure;
+        Serial.print(", loaded measure: ");
+        Serial.println(measureToString(measure));
+    }
+    Serial.println();
+    hourlyMeasuresFirstPass = false;
+    hourlyMeasuresIndex = EEPROM_HOURLY_STORED_MEASURES_NUMBER;
+
+
+    for (int i = 0; i < HOUR_AVG_MEASURES_NUMBER - EEPROM_HOURLY_STORED_MEASURES_NUMBER; i++) {
+        hourlyMeasures[i] = nullMeasure;
+    }
+
     if (DEBUG) {
         Serial.print(getTimeString(rtcTime())); Serial.println(" - The sensor should be woken now");
         Serial.print("DEFAULT_MEASURING_DURATION is ");Serial.println(DEFAULT_MEASURING_DURATION);Serial.print("DEFAULT_SLEEPING_PERIOD is ");
@@ -635,7 +866,7 @@ void loop() {
 
     if (currentMinute % period15m == 0 && currentMinute != lastMinutesAverageMinute) {
         lastMinutesAverageMinute = currentMinute;
-        const Measure &measure = calculateAverage(currentTime, period15m * 60, instantMeasures, EVERY_MEASURES_NUMBER);
+        const Measure &measure = calculateAverage(currentTime, period15m * 60, instantMeasures, INSTANT_MEASURES_NUMBER);
         placeMeasure(measure, MINUTE);
     }
 
@@ -659,11 +890,11 @@ void loop() {
         currentTimeMillisTimer = millis();
 
         PmResult pm = sds.queryPm();
-        float pm25 = NULL_MEASURE_VALUE;
-        float pm10 = NULL_MEASURE_VALUE;
+        signed short int pm25 = NULL_MEASURE_VALUE;
+        signed short int pm10 = NULL_MEASURE_VALUE;
         if (pm.isOk()) {
-            pm25 = round(pm.pm25*10)/10;
-            pm10 = round(pm.pm10*10)/10;
+            pm25 = round(pm.pm25*100);
+            pm10 = round(pm.pm10*100);
         }
 
         sensors_event_t roofTempEvent, roofHumidEvent;
@@ -679,27 +910,30 @@ void loop() {
         dht22LivingRoom.temperature().getEvent(&livingRoomTempEvent);
         dht22LivingRoom.humidity().getEvent(&livingRoomHumidEvent);
 
-        float roofTemp = isnan(roofTempEvent.temperature) ? NULL_MEASURE_VALUE : roofTempEvent.temperature;
-        float roofHumid = isnan(roofHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : roofHumidEvent.relative_humidity;
-        float windowTemp = isnan(windowTempEvent.temperature) ? NULL_MEASURE_VALUE : windowTempEvent.temperature;
-        float windowHumid = isnan(windowHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : windowHumidEvent.relative_humidity;
-        float livingRoomTemp = isnan(livingRoomTempEvent.temperature) ? NULL_MEASURE_VALUE : livingRoomTempEvent.temperature;
-        float livingRoomHumid = isnan(livingRoomHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : livingRoomHumidEvent.relative_humidity;
+        signed short int roofTemp = isnan(roofTempEvent.temperature) ? NULL_MEASURE_VALUE : round(roofTempEvent.temperature*100);
+        signed short int roofHumid = isnan(roofHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(roofHumidEvent.relative_humidity*100);
+        signed short int windowTemp = isnan(windowTempEvent.temperature) ? NULL_MEASURE_VALUE : round(windowTempEvent.temperature*100);
+        signed short int windowHumid = isnan(windowHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(windowHumidEvent.relative_humidity*100);
+        signed short int livingRoomTemp = isnan(livingRoomTempEvent.temperature) ? NULL_MEASURE_VALUE : round(livingRoomTempEvent.temperature*100);
+        signed short int livingRoomHumid = isnan(livingRoomHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(livingRoomHumidEvent.relative_humidity*100);
 
         char serviceInfo[17];
 
         bool windowTempIsLess = (windowTemp != NULL_MEASURE_VALUE && windowHumid != NULL_MEASURE_VALUE) && windowTemp < roofTemp;
         snprintf(serviceInfo, 17, "(%s)-(%.1fC/%.0f%%)",
                  windowTempIsLess ? "W" : "R",
-                 windowTempIsLess ? roofTemp : windowTemp,
-                 windowHumid
+                 windowTempIsLess ? ((float)roofTemp)/100 :((float) windowTemp)/100,
+                 ((float)windowHumid)/100
         );
 
+        short temp = windowTempIsLess ? windowTemp : roofTemp;
         Measure currentMeasure = {
                 currentTime,
                 pm25,
                 pm10,
-                windowTempIsLess ? windowTemp : roofTemp,
+                temp,
+                temp,
+                temp,
                 roofHumid,
                 livingRoomTemp,
                 livingRoomHumid,
