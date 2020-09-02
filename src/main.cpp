@@ -876,6 +876,22 @@ void setup() {
     connectToWifi();
     mqttClient.setServer("192.168.1.4", 1883);
 
+    while (!mqttClient.connected()) {
+        Serial.println("Connecting to MQTT...");
+
+        if (mqttClient.connect("ESP8266Client")) {
+
+            Serial.println("connected");
+
+        } else {
+
+            Serial.print("failed with state ");
+            Serial.print(mqttClient.state());
+            delay(2000);
+
+        }
+    }
+
     syncTime();
 
     Serial.println(""); Serial.print("Connected to "); Serial.println(ssid);
