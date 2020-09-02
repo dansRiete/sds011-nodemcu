@@ -37,6 +37,7 @@ const boolean DEBUG_CASE2 = true;
 #define EEPROM_DAILY_MEASURES_OFFSET 256
 #define EEPROM_HOURLY_MEASURES_OFFSET 2847
 #define EEPROM_DAILY_CURSOR_POSITION_ADDRESS 10
+#define MQTT_TOPIC "ALEKSHOME"
 const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
 
@@ -202,6 +203,10 @@ char* measureToString(Measure measure, boolean rollup) {
 }
 
 char* measureToString(Measure measure) {
+    return measureToString(measure, false);
+}
+
+char* measureToMqttString(Measure measure) {
     return measureToString(measure, false);
 }
 
@@ -1083,7 +1088,23 @@ void loop() {
                 windowTempIsLess
         };
         strcpy(currentMeasure.serviceInfo, serviceInfo);
-        mqttClient.publish("MY_TOPIC", measureToString(currentMeasure));
+        static char measureString[MAX_MEASURES_STRING_LENGTH];
+        snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
+                 "%s,pm25=%.1f,pm10=%.1f,roofT=%.1f,roofRh=%.0f,roofAh=%.1f,windT=%.1f,windRh=%.0f,windAh=%.1f,livRoomT=%.1f,livRoom=%.0f,livRoom=%.1f",
+                 getTimeString(currentMeasure.measureTime),
+                 round1(currentMeasure.pm25 / 100.0),
+                 round1(currentMeasure.pm10 / 100.0),
+                 roofTempEvent.temperature,
+                 roofHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(roofTempEvent.temperature, roofHumidEvent.relative_humidity)),
+                 windowTempEvent.temperature,
+                 windowHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(windowTempEvent.temperature, windowHumidEvent.relative_humidity)),
+                 livingRoomTempEvent.temperature,
+                 livingRoomHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(livingRoomTempEvent.temperature, livingRoomHumidEvent.relative_humidity))
+        );
+        mqttClient.publish(MQTT_TOPIC, measureString);
         placeMeasure(currentMeasure, INSTANT);
 
         if (DEBUG_CASE2) {
