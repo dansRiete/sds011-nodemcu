@@ -580,15 +580,17 @@ void connectToMqtt() {
             Serial.print(MQTT_SERVER);
             Serial.print(":");
             Serial.println(MQTT_PORT);
-        } else {
-            Serial.print("Connection to ");
-            Serial.print(MQTT_SERVER);
-            Serial.print(":");
-            Serial.print(MQTT_PORT);
-            Serial.print("failed with state ");
-            Serial.println(mqttClient.state());
-            delay(500);
         }
+    }
+    if (!mqttClient.connected()) {
+        Serial.print("Connection to ");
+        Serial.print(MQTT_SERVER);
+        Serial.print(":");
+        Serial.print(MQTT_PORT);
+        Serial.printf("failed after %d attempts, last error state ", WIFI_MAX_RETRIES);
+        Serial.println(mqttClient.state());
+        delay(500);
+
     }
 }
 
