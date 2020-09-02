@@ -9,6 +9,7 @@
 #include <../lib/DHT-sensor-library-master/DHT_U.h>
 #include <ESP8266HTTPClient.h>
 #include <../lib/eeprom_rotate-master/src/EEPROM_Rotate.h>
+#include <../lib/PubSubClient-2.8.0/src/PubSubClient.h>
 
 #define WIFI_MAX_RETRIES 40
 #define DEFAULT_MEASURING_DURATION 5*1000
@@ -53,6 +54,8 @@ DHT_Unified dht21Window(DHT21_WINDOW_PIN, DHT21);
 DHT_Unified dht22LivingRoom(DHT22_LIVING_ROOM_PIN, DHT22);
 const char csvHeader[] = "date, pm2.5, pm10, inTemp, inRH, inAH, outTemp, outRH, outAH\n";
 EEPROM_Rotate EEPROMr;
+WiFiClient wclient;
+PubSubClient mqttClient(wclient);
 
 struct Measure {
     time_t measureTime;
@@ -871,6 +874,7 @@ void setup() {
 
     const char *ssid = "ALEKSNET-ROOF";
     connectToWifi();
+    mqttClient.setServer("192.168.1.4", 1883);
 
     syncTime();
 
@@ -1062,7 +1066,7 @@ void loop() {
                 windowTempIsLess
         };
         strcpy(currentMeasure.serviceInfo, serviceInfo);
-
+        mqttClient.publish("MY_TOPIC", "Hello from ESP8266");
         placeMeasure(currentMeasure, INSTANT);
 
         if (DEBUG_CASE2) {
