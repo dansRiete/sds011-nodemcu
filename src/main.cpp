@@ -1082,7 +1082,7 @@ void loop() {
                 windowTempIsLess
         };
         strcpy(currentMeasure.serviceInfo, serviceInfo);
-        mqttClient.publish("MY_TOPIC", "Hello from ESP8266");
+        mqttClient.publish("MY_TOPIC", measureToString(currentMeasure));
         placeMeasure(currentMeasure, INSTANT);
 
         if (DEBUG_CASE2) {
