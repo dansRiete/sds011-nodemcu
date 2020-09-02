@@ -1025,6 +1025,7 @@ void loop() {
     }
 
     server.handleClient();
+    mqttClient.loop();
 
     //  Step 1 - Measuring
     if (millis() - currentTimeMillisTimer > measuringDuration && step == 1) {
