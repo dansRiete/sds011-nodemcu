@@ -38,6 +38,8 @@ const boolean DEBUG_CASE2 = true;
 #define EEPROM_HOURLY_MEASURES_OFFSET 2847
 #define EEPROM_DAILY_CURSOR_POSITION_ADDRESS 10
 #define MQTT_TOPIC "ALEKSHOME"
+#define MQTT_SERVER "192.168.1.4"
+#define MQTT_PORT 1883
 const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
 
@@ -567,6 +569,29 @@ void connectToWifi() {
     }
 }
 
+void connectToMqtt() {
+    int retries = 0;
+    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    while (!mqttClient.connected() && retries < WIFI_MAX_RETRIES) {
+        retries++;
+        Serial.println("Connecting to MQTT...");
+        if (mqttClient.connect("ESP8266Client")) {
+            Serial.print("Connected to ");
+            Serial.print(MQTT_SERVER);
+            Serial.print(":");
+            Serial.println(MQTT_PORT);
+        } else {
+            Serial.print("Connection to ");
+            Serial.print(MQTT_SERVER);
+            Serial.print(":");
+            Serial.print(MQTT_PORT);
+            Serial.print("failed with state ");
+            Serial.println(mqttClient.state());
+            delay(500);
+        }
+    }
+}
+
 time_t rtcTime() {
 //    Time t = rtc.time();
 //    return makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});   //time elements
@@ -879,23 +904,7 @@ void setup() {
 
     const char *ssid = "ALEKSNET-ROOF";
     connectToWifi();
-    mqttClient.setServer("192.168.1.4", 1883);
-
-    while (!mqttClient.connected()) {
-        Serial.println("Connecting to MQTT...");
-
-        if (mqttClient.connect("ESP8266Client")) {
-
-            Serial.println("connected");
-
-        } else {
-
-            Serial.print("failed with state ");
-            Serial.print(mqttClient.state());
-            delay(2000);
-
-        }
-    }
+    connectToMqtt();
 
     syncTime();
 
@@ -989,6 +998,10 @@ void loop() {
 
     if (WiFi.status() != WL_CONNECTED) {
         connectToWifi();
+    }
+
+    if (!mqttClient.connected()) {
+        connectToMqtt();
     }
 
     time_t currentTime = rtcTime();
@@ -1090,7 +1103,7 @@ void loop() {
         strcpy(currentMeasure.serviceInfo, serviceInfo);
         static char measureString[MAX_MEASURES_STRING_LENGTH];
         snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
-                 "%s,pm25=%.1f,pm10=%.1f,roofT=%.1f,roofRh=%.0f,roofAh=%.1f,windT=%.1f,windRh=%.0f,windAh=%.1f,livRoomT=%.1f,livRoom=%.0f,livRoom=%.1f",
+                 "%s,pm25=%.1f,pm10=%.1f,roofT=%.1f,roofRh=%.0f,roofAh=%.1f,windT=%.1f,windRh=%.0f,windAh=%.1f,livRoomT=%.1f,livRoomRh=%.0f,livRoomAh=%.1f",
                  getTimeString(currentMeasure.measureTime),
                  round1(currentMeasure.pm25 / 100.0),
                  round1(currentMeasure.pm10 / 100.0),
