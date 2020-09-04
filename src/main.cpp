@@ -11,7 +11,8 @@
 #include <../lib/eeprom_rotate-master/src/EEPROM_Rotate.h>
 #include <../lib/PubSubClient-2.8.0/src/PubSubClient.h>
 
-#define WIFI_MAX_RETRIES 40
+#define WIFI_MAX_RETRIES 20
+#define MQTT_MAX_RETRIES 1
 #define DEFAULT_MEASURING_DURATION 5*1000
 #define DEFAULT_SLEEPING_PERIOD 55*1000
 #define MINUTE_AVERAGE_PERIOD 10 * 60
@@ -572,7 +573,7 @@ void connectToWifi() {
 void connectToMqtt() {
     int retries = 0;
     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
-    while (!mqttClient.connected() && retries < WIFI_MAX_RETRIES) {
+    while (!mqttClient.connected() && retries < MQTT_MAX_RETRIES) {
         retries++;
         Serial.println("Connecting to MQTT...");
         if (mqttClient.connect("ESP8266Client")) {
@@ -998,14 +999,6 @@ void loop() {
 
     delay(20);
 
-    if (WiFi.status() != WL_CONNECTED) {
-        connectToWifi();
-    }
-
-    if (!mqttClient.connected()) {
-        connectToMqtt();
-    }
-
     time_t currentTime = rtcTime();
     byte currentMinute = minute(currentTime);
     byte currentHour = hour(currentTime);
@@ -1051,6 +1044,14 @@ void loop() {
     if (millis() - currentTimeMillisTimer > measuringDuration && step == 1) {
 
         currentTimeMillisTimer = millis();
+
+        if (WiFi.status() != WL_CONNECTED) {
+            connectToWifi();
+        }
+
+        if (!mqttClient.connected()) {
+            connectToMqtt();
+        }
 
         PmResult pm = sds.queryPm();
         signed short int pm25 = NULL_MEASURE_VALUE;
