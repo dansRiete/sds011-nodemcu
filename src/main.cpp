@@ -38,8 +38,11 @@ const boolean DEBUG_CASE2 = true;
 #define EEPROM_DAILY_MEASURES_OFFSET 256
 #define EEPROM_HOURLY_MEASURES_OFFSET 2847
 #define EEPROM_DAILY_CURSOR_POSITION_ADDRESS 10
-#define MQTT_TOPIC "ALEKSHOME"
-#define MQTT_SERVER "192.168.1.4"
+#define MQTT_TOPIC "ALEXKZK-SMARTHOUSE"
+#define MQTT_SERVER "185.212.128.246"
+#define MQTT_SUBSCRIBER "ESP8266-SmartHouse"
+#define MQTT_USER "alexkzk"
+#define MQTT_PASSWORD "Vlena<G13"
 #define MQTT_PORT 1883
 const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
@@ -576,7 +579,7 @@ void connectToMqtt() {
     while (!mqttClient.connected() && retries < MQTT_MAX_RETRIES) {
         retries++;
         Serial.println("Connecting to MQTT...");
-        if (mqttClient.connect("ESP8266Client")) {
+        if (mqttClient.connect(MQTT_SUBSCRIBER, MQTT_USER, MQTT_PASSWORD)) {
             Serial.print("Connected to ");
             Serial.print(MQTT_SERVER);
             Serial.print(":");
