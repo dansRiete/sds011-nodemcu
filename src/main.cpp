@@ -4,10 +4,11 @@
 #include <HardwareSerial.h>
 
 const boolean DEBUG = true;
-const int FAN_DURATION_SEC = 2;
-const int FAN_ENGAGEMENT_THRESHOLD_SEC = 5;
+const int FAN_DURATION_SEC = 240;
+const int FAN_ENGAGEMENT_THRESHOLD_SEC = 120;
 static const int LIGHT_PIN = 4;
 static const int RELAY_PIN = 5;
+static const int BUZZER_PIN = 15;
 boolean lightState = false;
 boolean fanState = false;
 boolean fanEngagedMsg = false;
@@ -19,9 +20,12 @@ unsigned long continuousModeEnabledTimer = 0;
 const unsigned long continuousModeDuration = 40000;
 long logTimer;
 
+void beep();
+
 void setup() {
     Serial.begin(115200);
     pinMode(RELAY_PIN, OUTPUT);
+    pinMode(BUZZER_PIN, OUTPUT);
     lastLightSwitchTimestmap = millis();
     logTimer = millis();
     lightState = !digitalRead(LIGHT_PIN);
@@ -85,7 +89,16 @@ void issueFanArmingMessage(unsigned long sinceLastSwitchTs) {
         fanEngagedMsg = true;
         Serial.print(millis());
         Serial.println(" - Fan armed ");
+        beep();
     }
+}
+
+void beep() {
+    tone(BUZZER_PIN, 600);
+    delay(50);
+    tone(BUZZER_PIN, 900);
+    delay(50);
+    noTone(BUZZER_PIN);
 }
 
 void activateContinuousMode() {
@@ -114,6 +127,7 @@ void loop() {
         if (newLightState == lightState) {
             Serial.print(millis());
             Serial.println(" - QUICKSHIFT!");
+            beep();
             if (fanState) {
                 turnOffTheFan();
             } else {
