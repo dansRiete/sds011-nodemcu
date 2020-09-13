@@ -18,31 +18,55 @@
 #define MQTT_PASSWORD "Vlena<G13"
 #define MQTT_PORT 1883
 
+// constants
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
 const boolean DEBUG = false;
-const int FAN_DURATION_SEC = 240;
-const int FAN_ENGAGEMENT_THRESHOLD_SEC = 120;
+
+// configuration properties
+unsigned int fanDurationSec = 240;
+unsigned int fanEngagementThresholdSec = 120;
+unsigned int continuousModeDurationSec = 3600;
+
+// pins definitions
 static const int TEMP_SENSOR_PIN = 0;
 static const int LIGHT_PIN = 4;
 static const int RELAY_PIN = 5;
 static const int BUZZER_PIN = 15;
+
+//state flags
 boolean lightState = false;
 boolean fanState = false;
-boolean fanEngagedMsg = false;
-unsigned long lastLightSwitchTimestamp;
-unsigned long fanTimer;
-boolean continuousMode = false;
 boolean continuousFanState = false;
-unsigned long continuousModeEnabledTimer = 0;
-unsigned long lastQuickshiftTimestamp = 0;
-const unsigned long continuousModeDuration = 40000;
-unsigned long logTimer;
+boolean continuousMode = false;
+boolean fanEngagedMsg = false;
+
+//time stamps
+unsigned long lastLightSwitchTs = 0;
+unsigned long fanSwitchedOnTs = 0;
+unsigned long contModeEnabledTs = 0;
+unsigned long contactBouncePreventionTs = 0;
+unsigned long logTimer = 0;
+
 int lastMqttSendMinute = -1;
-DHT_Unified dht22LivingRoom(TEMP_SENSOR_PIN, DHT22);
+float lastTemp;
+float lastRh;
+float lastAh;
+DHT_Unified dht22Washroom(TEMP_SENSOR_PIN, DHT22);
 WiFiClient wclient;
 PubSubClient mqttClient(wclient);
+ESP8266WebServer server(8088);
 
 void beep();
+
+void disableContMode();
+
+float calculateAbsoluteHumidity(float temp, float rh) {
+    return 6.112 * pow(2.71828, 17.67 * temp / (243.5 + temp)) * rh * 2.1674 / (273.15 + temp);
+}
+
+float roundTo(float value, int accuracy){
+    return round(value * accuracy) / accuracy;
+}
 
 char* getTimeString(time_t time) {
     static char measureString[20];
@@ -122,6 +146,63 @@ void connectToMqtt() {
     }
 }
 
+void activateContMode() {
+    contModeEnabledTs = millis();
+    continuousMode = true;
+}
+
+void turnOnTheFan() {
+    fanState = true;
+    fanSwitchedOnTs = millis();
+}
+
+void turnOffTheFan() {
+    fanState = false;
+    fanEngagedMsg = false;
+    contactBouncePreventionTs = millis();
+}
+
+void configureHttpServer() {
+
+    server.on("/contOn", HTTP_POST, []() {
+        activateContMode();
+        server.send(200, "text/html", "OK");
+    });
+
+    server.on("/contOff", HTTP_POST, []() {
+        disableContMode();
+        server.send(200, "text/html", "OK");
+    });
+
+    server.on("/config", HTTP_POST, []() {
+        char parameters[200];
+        continuousModeDurationSec = server.arg("continuousModeDurationSec").toInt();
+        fanEngagementThresholdSec = server.arg("fanEngagementThresholdSec").toInt();
+        fanDurationSec = server.arg("fanDurationSec").toInt();
+        disableContMode();
+        turnOffTheFan();
+        snprintf(parameters, 200, "continuousModeDurationSec = %d, fanEngagementThresholdSec = %d, fanDurationSec = %d",
+                 continuousModeDurationSec, fanEngagementThresholdSec, fanDurationSec);
+        server.send(200, "text/plain", String(parameters));
+    });
+
+    server.on("/config", []() {
+        char parameters[500];
+        snprintf(parameters, 500,
+                "%s - continuousModeDurationSec = %d, fanEngagementThresholdSec = %d, fanDurationSec = %d, continuousMode = %d,"
+                " continuousFanState = %d, lightState = %d, fanState = %d, nowTs = %lu, contModeEnabledTs = %lu,"
+                " fanSwitchedOnTs = %lu, lastLightSwitchTs = %lu, contModeRemain(min) = %lu",
+                 getTimeString(now()), continuousModeDurationSec, fanEngagementThresholdSec, fanDurationSec,
+                 continuousMode, continuousFanState, lightState, fanState, millis(), contModeEnabledTs, fanSwitchedOnTs,
+                 lastLightSwitchTs,
+                 continuousMode ? continuousModeDurationSec / 60 - (millis() - contModeEnabledTs) / 1000 / 60 : 0
+        );
+        server.send(200, "text/plain", String(parameters));
+    });
+
+    server.begin();
+}
+
 void syncTime() {
     HTTPClient http;
     Serial.print("Getting current time from ");
@@ -146,9 +227,9 @@ void syncTime() {
 }
 
 void setup() {
-    delay(20);
     Serial.begin(115200);
-    dht22LivingRoom.begin();
+    configureHttpServer();
+    dht22Washroom.begin();
     pinMode(RELAY_PIN, OUTPUT);
     pinMode(BUZZER_PIN, OUTPUT);
     connectToWifi();
@@ -156,7 +237,7 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
         syncTime();
     }
-    lastLightSwitchTimestamp = millis();
+    lastLightSwitchTs = millis();
     logTimer = millis();
     lightState = !digitalRead(LIGHT_PIN);
     Serial.print(millis());
@@ -164,17 +245,6 @@ void setup() {
     Serial.print(lightState);
     Serial.println(lightState ? ") on" : ") off");
     fanState = false;
-}
-
-void turnOnTheFan() {
-    fanState = true;
-    fanTimer = millis();
-}
-
-void turnOffTheFan() {
-    fanState = false;
-    fanEngagedMsg = false;
-    lastQuickshiftTimestamp = millis();
 }
 
 void changeLightState(boolean newLightState, unsigned long currentLightStateDuration) {
@@ -186,17 +256,17 @@ void changeLightState(boolean newLightState, unsigned long currentLightStateDura
         if (continuousFanState) {
             continuousFanState = fanState;
         }
-        lastLightSwitchTimestamp = millis();
+        lastLightSwitchTs = millis();
     } else {
         Serial.print(millis());
         Serial.print(" - Light is off, duration ");
         Serial.print(currentLightStateDuration);
         Serial.println(" ms.");
-        lastLightSwitchTimestamp = millis();
-        if (currentLightStateDuration / 1000 > FAN_ENGAGEMENT_THRESHOLD_SEC) {
+        lastLightSwitchTs = millis();
+        if (currentLightStateDuration / 1000 > fanEngagementThresholdSec) {
             turnOnTheFan();
         }
-        fanTimer = millis();
+        fanSwitchedOnTs = millis();
     }
     lightState = newLightState;
 }
@@ -226,34 +296,31 @@ void longBeep() {
     noTone(BUZZER_PIN);
 }
 
-void activateContinuousMode() {
-    continuousModeEnabledTimer = millis();
-    continuousMode = true;
-}
-
 void loop() {
 
+    delay(20);
+    server.handleClient();
+
     time_t currTime = now();
-    int currentSecond = second(currTime);
     int currentMinute = minute(currTime);
 
     if (Serial.available() > 0 && Serial.parseInt() == 5) {
-        activateContinuousMode();
+        activateContMode();
         Serial.print(millis());
         Serial.println(" - CONT MODE ACTIVATED");
     }
 
-    unsigned long sinceLastLightSwitchTimestamp = millis() - lastLightSwitchTimestamp;
+    unsigned long sinceLastLightSwitchTimestamp = millis() - lastLightSwitchTs;
     boolean newLightState = !digitalRead(LIGHT_PIN);
 
-    if (!fanState && lightState && !fanEngagedMsg && millisToSeconds(sinceLastLightSwitchTimestamp) > FAN_ENGAGEMENT_THRESHOLD_SEC) {
+    if (!fanState && lightState && !fanEngagedMsg && millisToSeconds(sinceLastLightSwitchTimestamp) > fanEngagementThresholdSec) {
         issueFanArmingMessage();
     }
 
     if (newLightState != lightState) {
         delay(500);
         newLightState = !digitalRead(LIGHT_PIN);
-        unsigned long sinceLastQuickshiftMillis = millis() - lastQuickshiftTimestamp;
+        unsigned long sinceLastQuickshiftMillis = millis() - contactBouncePreventionTs;
         if (newLightState == lightState && (sinceLastQuickshiftMillis > 3000 || sinceLastQuickshiftMillis < 0)) {
             Serial.print(millis());
             Serial.println(" - QUICKSHIFT!");
@@ -263,27 +330,22 @@ void loop() {
             } else {
                 turnOnTheFan();
             }
-            lastQuickshiftTimestamp = millis();
+            contactBouncePreventionTs = millis();
         } else {
             changeLightState(newLightState, sinceLastLightSwitchTimestamp);
         }
     }
 
-    if ((fanState && !lightState && (millis() - fanTimer) / 1000 > FAN_DURATION_SEC) || (millis() - fanTimer) / 1000 < 0) {
+    if ((fanState && !lightState && (millis() - fanSwitchedOnTs) / 1000 > fanDurationSec) || (millis() - fanSwitchedOnTs) / 1000 < 0) {
         // After switching the light off, fan must be switched off upon timeout
         turnOffTheFan();
     }
 
-    if (!fanState && !lightState && continuousMode && millis() - continuousModeEnabledTimer < continuousModeDuration) {
+    if (!fanState && !lightState && continuousMode && millis() - contModeEnabledTs < continuousModeDurationSec * 1000) {
         // If continuous mode enabled, turn on the fan by a schedule
-        continuousFanState = currentSecond % 5 == 0;
-    } else if (continuousMode && (millis() - continuousModeEnabledTimer >= continuousModeDuration || millis() - continuousModeEnabledTimer < 0)) {
-        // Disable continuous mode
-        continuousMode = false;
-        continuousFanState = false;
-        continuousModeEnabledTimer = 0;
-        Serial.print(millis());
-        Serial.println(" - CONT MODE DEACTIVATED");
+        continuousFanState = currentMinute % 15 < 2;
+    } else if (continuousMode && (millis() - contModeEnabledTs >= continuousModeDurationSec * 1000 || millis() - contModeEnabledTs < 0)) {
+        disableContMode();
     }
 
     if(DEBUG && millis() - logTimer > 500) {
@@ -315,17 +377,19 @@ void loop() {
             connectToMqtt();
         }
 
-        sensors_event_t livingRoomTempEvent;
-        sensors_event_t livingRoomHumidEvent;
-        dht22LivingRoom.temperature().getEvent(&livingRoomTempEvent);
-        dht22LivingRoom.humidity().getEvent(&livingRoomHumidEvent);
+        sensors_event_t washroomTempEvent;
+        sensors_event_t washroomHumidEvent;
+        dht22Washroom.temperature().getEvent(&washroomTempEvent);
+        dht22Washroom.humidity().getEvent(&washroomHumidEvent);
         static char measureString[100];
         snprintf(measureString, 100,
-                 "%s,wcT=%.1f,wcRh=%.0f",
+                 "%s,washroom1T=%.1f,washroom1Rh=%.0f,washroom1Ah=%.1f",
                  getTimeString(currTime),
-                 isnan(livingRoomTempEvent.temperature) ? -100 : livingRoomTempEvent.temperature,
-                 isnan(livingRoomHumidEvent.relative_humidity) ? -100 : livingRoomHumidEvent.relative_humidity
-                 );
+                 isnan(washroomTempEvent.temperature) ? lastTemp = -100 : lastTemp = washroomTempEvent.temperature,
+                 isnan(washroomHumidEvent.relative_humidity) ? lastRh = -100 : lastRh = washroomHumidEvent.relative_humidity,
+                 isnan(washroomTempEvent.temperature) || isnan(washroomHumidEvent.relative_humidity) ? lastRh = -100 :
+                         lastRh = roundTo(calculateAbsoluteHumidity(washroomTempEvent.temperature, washroomHumidEvent.relative_humidity), 1)
+         );
         
         mqttClient.publish(MQTT_TOPIC, measureString);
     }
@@ -333,4 +397,12 @@ void loop() {
     // Set the relay position
     digitalWrite(RELAY_PIN, fanState || continuousFanState);
 
+}
+
+void disableContMode() {// Disable continuous mode
+    continuousMode = false;
+    continuousFanState = false;
+    contModeEnabledTs = 0;
+    Serial.print(millis());
+    Serial.println(" - CONT MODE DEACTIVATED");
 }
