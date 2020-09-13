@@ -146,6 +146,7 @@ void syncTime() {
 }
 
 void setup() {
+    delay(20);
     Serial.begin(115200);
     dht22LivingRoom.begin();
     pinMode(RELAY_PIN, OUTPUT);
@@ -173,6 +174,7 @@ void turnOnTheFan() {
 void turnOffTheFan() {
     fanState = false;
     fanEngagedMsg = false;
+    lastQuickshiftTimestamp = millis();
 }
 
 void changeLightState(boolean newLightState, unsigned long currentLightStateDuration) {
