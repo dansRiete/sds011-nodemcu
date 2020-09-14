@@ -23,9 +23,10 @@ const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.tx
 const boolean DEBUG = false;
 
 // configuration properties
-unsigned int fanDurationSec = 240;
+unsigned int afterLightSwitchOffFanDurationSec = 240;
 unsigned int fanEngagementThresholdSec = 120;
-unsigned int continuousModeDurationSec = 3600;
+unsigned int continuousModeDurationSec = 7200;
+unsigned int contModeFanSwitchedOnDurationMin = 5;
 
 // pins definitions
 static const int TEMP_SENSOR_PIN = 0;
@@ -178,23 +179,25 @@ void configureHttpServer() {
         char parameters[200];
         continuousModeDurationSec = server.arg("continuousModeDurationSec").toInt();
         fanEngagementThresholdSec = server.arg("fanEngagementThresholdSec").toInt();
-        fanDurationSec = server.arg("fanDurationSec").toInt();
+        contModeFanSwitchedOnDurationMin = server.arg("contModeFanSwitchedOnDurationMin").toInt();
+        afterLightSwitchOffFanDurationSec = server.arg("afterLightSwitchOffFanDurationSec").toInt();
         disableContMode();
         turnOffTheFan();
-        snprintf(parameters, 200, "continuousModeDurationSec = %d, fanEngagementThresholdSec = %d, fanDurationSec = %d",
-                 continuousModeDurationSec, fanEngagementThresholdSec, fanDurationSec);
+        snprintf(parameters, 200, "continuousModeDurationSec = %d, fanEngagementThresholdSec = %d, afterLightSwitchOffFanDurationSec = %d",
+                 continuousModeDurationSec, fanEngagementThresholdSec, afterLightSwitchOffFanDurationSec);
         server.send(200, "text/plain", String(parameters));
     });
 
     server.on("/config", []() {
         char parameters[500];
         snprintf(parameters, 500,
-                "%s - continuousModeDurationSec = %d, fanEngagementThresholdSec = %d, fanDurationSec = %d, continuousMode = %d,"
-                " continuousFanState = %d, lightState = %d, fanState = %d, nowTs = %lu, contModeEnabledTs = %lu,"
-                " fanSwitchedOnTs = %lu, lastLightSwitchTs = %lu, contModeRemain(min) = %lu",
-                 getTimeString(now()), continuousModeDurationSec, fanEngagementThresholdSec, fanDurationSec,
-                 continuousMode, continuousFanState, lightState, fanState, millis(), contModeEnabledTs, fanSwitchedOnTs,
-                 lastLightSwitchTs,
+                "%s - continuousModeDurationSec = %d, fanEngagementThresholdSec = %d, afterLightSwitchOffFanDurationSec = %d,"
+                " contModeFanSwitchedOnDurationMin = %d, continuousMode = %d, continuousFanState = %d, lightState = %d,"
+                " fanState = %d, nowTs = %lu, contModeEnabledTs = %lu, fanSwitchedOnTs = %lu, lastLightSwitchTs = %lu,"
+                " contModeRemain(min) = %lu",
+                 getTimeString(now()), continuousModeDurationSec, fanEngagementThresholdSec, afterLightSwitchOffFanDurationSec,
+                 contModeFanSwitchedOnDurationMin, continuousMode, continuousFanState, lightState, fanState, millis(),
+                 contModeEnabledTs, fanSwitchedOnTs, lastLightSwitchTs,
                  continuousMode ? continuousModeDurationSec / 60 - (millis() - contModeEnabledTs) / 1000 / 60 : 0
         );
         server.send(200, "text/plain", String(parameters));
@@ -336,15 +339,17 @@ void loop() {
         }
     }
 
-    if ((fanState && !lightState && (millis() - fanSwitchedOnTs) / 1000 > fanDurationSec) || (millis() - fanSwitchedOnTs) / 1000 < 0) {
+    if ((fanState && !lightState && (millis() - fanSwitchedOnTs) / 1000 > afterLightSwitchOffFanDurationSec)
+        || (millis() - fanSwitchedOnTs) / 1000 < 0) {
         // After switching the light off, fan must be switched off upon timeout
         turnOffTheFan();
     }
 
     if (!fanState && !lightState && continuousMode && millis() - contModeEnabledTs < continuousModeDurationSec * 1000) {
         // If continuous mode enabled, turn on the fan by a schedule
-        continuousFanState = currentMinute % 15 < 2;
-    } else if (continuousMode && (millis() - contModeEnabledTs >= continuousModeDurationSec * 1000 || millis() - contModeEnabledTs < 0)) {
+        continuousFanState = currentMinute % 15 < contModeFanSwitchedOnDurationMin;
+    } else if (continuousMode && (millis() - contModeEnabledTs >= continuousModeDurationSec * 1000
+        || millis() - contModeEnabledTs < 0)) {
         disableContMode();
     }
 
