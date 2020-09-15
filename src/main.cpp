@@ -24,9 +24,10 @@ const boolean DEBUG = false;
 
 // configuration properties
 static const int CONTACT_BOUNCE_PREVENTION_THRESHOLD = 1000;
-unsigned int fanServiceDurationMinutes = 4;
+unsigned int fanServiceDurationMinutes = 5;
 unsigned int fanEngagementThresholdMinutes = 2;
 unsigned int continuousModeDurationMinutes = 180;
+unsigned int continuousModeTimesPerHour = 3;
 
 // pins definitions
 static const int TEMP_SENSOR_PIN = 0;
@@ -178,23 +179,26 @@ void configureHttpServer() {
     server.on("/config", HTTP_POST, []() {
         char parameters[200];
         continuousModeDurationMinutes = server.arg("continuousModeDurationMinutes").toInt();
+        continuousModeTimesPerHour = server.arg("continuousModeTimesPerHour").toInt();
         fanEngagementThresholdMinutes = server.arg("fanEngagementThresholdMinutes").toInt();
         fanServiceDurationMinutes = server.arg("fanServiceDurationMinutes").toInt();
         disableContMode();
         turnOffTheFan();
-        snprintf(parameters, 200, "continuousModeDurationMinutes = %d, fanEngagementThresholdMinutes = %d, fanServiceDurationMinutes = %d",
-                 continuousModeDurationMinutes, fanEngagementThresholdMinutes, fanServiceDurationMinutes);
+        snprintf(parameters, 200, "continuousModeDurationMinutes = %d, continuousModeTimesPerHour = %d,"
+                                  " fanEngagementThresholdMinutes = %d, fanServiceDurationMinutes = %d",
+                 continuousModeDurationMinutes, continuousModeTimesPerHour, fanEngagementThresholdMinutes, fanServiceDurationMinutes);
         server.send(200, "text/plain", String(parameters));
     });
 
     server.on("/config", []() {
         char parameters[500];
         snprintf(parameters, 500,
-                "%s - continuousModeDurationMinutes = %d, fanEngagementThresholdMinutes = %d, fanServiceDurationMinutes = %d,"
-                " continuousMode = %d, continuousFanState = %d, lightState = %d,"
+                "[%s - continuousModeDurationMinutes = %d, continuousModeTimesPerHour = %d, fanEngagementThresholdMinutes = %d,"
+                " fanServiceDurationMinutes = %d], continuousMode = %d, continuousFanState = %d, lightState = %d,"
                 " fanState = %d, nowTs = %lu, contModeEnabledTs = %lu, fanSwitchedOnTs = %lu, lastLightSwitchTs = %lu,"
-                " contModeRemain(min) = %lu",
-                 getTimeString(now()), continuousModeDurationMinutes, fanEngagementThresholdMinutes, fanServiceDurationMinutes,
+                " contModeRemain(min) = %lu (configurable properties POST-/config are in square parentheses)",
+                 getTimeString(now()), continuousModeDurationMinutes, continuousModeTimesPerHour,
+                 fanEngagementThresholdMinutes, fanServiceDurationMinutes,
                  continuousMode, continuousFanState, lightState, fanState, millis(),
                  contModeEnabledTs, fanSwitchedOnTs, lastLightSwitchTs,
                  continuousMode ? continuousModeDurationMinutes - (millis() - contModeEnabledTs) / 1000 / 60 : 0
@@ -346,7 +350,7 @@ void loop() {
 
     if (!fanState && !lightState && continuousMode && millis() - contModeEnabledTs < continuousModeDurationMinutes * 60 * 1000) {
         // If continuous mode enabled, turn on the fan by a schedule
-        continuousFanState = currentMinute % 15 < fanServiceDurationMinutes;
+        continuousFanState = currentMinute % (60 / continuousModeTimesPerHour) < fanServiceDurationMinutes;
     } else if (continuousMode && (millis() - contModeEnabledTs >= continuousModeDurationMinutes * 60 * 1000
         || millis() - contModeEnabledTs < 0)) {
         disableContMode();
