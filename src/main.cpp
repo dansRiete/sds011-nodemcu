@@ -9,8 +9,10 @@
 #include <../lib/DHT-sensor-library-master/DHT_U.h>
 #include <ESP8266HTTPClient.h>
 #include <../lib/eeprom_rotate-master/src/EEPROM_Rotate.h>
+#include <../lib/PubSubClient-2.8.0/src/PubSubClient.h>
 
-#define WIFI_MAX_RETRIES 40
+#define WIFI_MAX_RETRIES 20
+#define MQTT_MAX_RETRIES 1
 #define DEFAULT_MEASURING_DURATION 5*1000
 #define DEFAULT_SLEEPING_PERIOD 55*1000
 #define MINUTE_AVERAGE_PERIOD 10 * 60
@@ -36,6 +38,12 @@ const boolean DEBUG_CASE2 = true;
 #define EEPROM_DAILY_MEASURES_OFFSET 256
 #define EEPROM_HOURLY_MEASURES_OFFSET 2847
 #define EEPROM_DAILY_CURSOR_POSITION_ADDRESS 10
+#define MQTT_TOPIC "ALEXKZK-SMARTHOUSE"
+#define MQTT_SERVER "185.212.128.246"
+#define MQTT_SUBSCRIBER "ESP8266-SmartHouse"
+#define MQTT_USER "alexkzk"
+#define MQTT_PASSWORD "Vlena<G13"
+#define MQTT_PORT 1883
 const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
 
@@ -53,6 +61,8 @@ DHT_Unified dht21Window(DHT21_WINDOW_PIN, DHT21);
 DHT_Unified dht22LivingRoom(DHT22_LIVING_ROOM_PIN, DHT22);
 const char csvHeader[] = "date, pm2.5, pm10, inTemp, inRH, inAH, outTemp, outRH, outAH\n";
 EEPROM_Rotate EEPROMr;
+WiFiClient wclient;
+PubSubClient mqttClient(wclient);
 
 struct Measure {
     time_t measureTime;
@@ -199,6 +209,10 @@ char* measureToString(Measure measure, boolean rollup) {
 }
 
 char* measureToString(Measure measure) {
+    return measureToString(measure, false);
+}
+
+char* measureToMqttString(Measure measure) {
     return measureToString(measure, false);
 }
 
@@ -559,6 +573,31 @@ void connectToWifi() {
     }
 }
 
+void connectToMqtt() {
+    int retries = 0;
+    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    while (!mqttClient.connected() && retries < MQTT_MAX_RETRIES) {
+        retries++;
+        Serial.println("Connecting to MQTT...");
+        if (mqttClient.connect(MQTT_SUBSCRIBER, MQTT_USER, MQTT_PASSWORD)) {
+            Serial.print("Connected to ");
+            Serial.print(MQTT_SERVER);
+            Serial.print(":");
+            Serial.println(MQTT_PORT);
+        }
+    }
+    if (!mqttClient.connected()) {
+        Serial.print("Connection to ");
+        Serial.print(MQTT_SERVER);
+        Serial.print(":");
+        Serial.print(MQTT_PORT);
+        Serial.printf("failed after %d attempts, last error state ", WIFI_MAX_RETRIES);
+        Serial.println(mqttClient.state());
+        delay(500);
+
+    }
+}
+
 time_t rtcTime() {
 //    Time t = rtc.time();
 //    return makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});   //time elements
@@ -871,6 +910,7 @@ void setup() {
 
     const char *ssid = "ALEKSNET-ROOF";
     connectToWifi();
+    connectToMqtt();
 
     syncTime();
 
@@ -962,10 +1002,6 @@ void loop() {
 
     delay(20);
 
-    if (WiFi.status() != WL_CONNECTED) {
-        connectToWifi();
-    }
-
     time_t currentTime = rtcTime();
     byte currentMinute = minute(currentTime);
     byte currentHour = hour(currentTime);
@@ -1005,11 +1041,20 @@ void loop() {
     }
 
     server.handleClient();
+    mqttClient.loop();
 
     //  Step 1 - Measuring
     if (millis() - currentTimeMillisTimer > measuringDuration && step == 1) {
 
         currentTimeMillisTimer = millis();
+
+        if (WiFi.status() != WL_CONNECTED) {
+            connectToWifi();
+        }
+
+        if (!mqttClient.connected()) {
+            connectToMqtt();
+        }
 
         PmResult pm = sds.queryPm();
         signed short int pm25 = NULL_MEASURE_VALUE;
@@ -1062,7 +1107,23 @@ void loop() {
                 windowTempIsLess
         };
         strcpy(currentMeasure.serviceInfo, serviceInfo);
-
+        static char measureString[MAX_MEASURES_STRING_LENGTH];
+        snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
+                 "%s,pm25=%.1f,pm10=%.1f,roofT=%.1f,roofRh=%.0f,roofAh=%.1f,windT=%.1f,windRh=%.0f,windAh=%.1f,livRoomT=%.1f,livRoomRh=%.0f,livRoomAh=%.1f",
+                 getTimeString(currentMeasure.measureTime),
+                 round1(currentMeasure.pm25 / 100.0),
+                 round1(currentMeasure.pm10 / 100.0),
+                 roofTempEvent.temperature,
+                 roofHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(roofTempEvent.temperature, roofHumidEvent.relative_humidity)),
+                 windowTempEvent.temperature,
+                 windowHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(windowTempEvent.temperature, windowHumidEvent.relative_humidity)),
+                 livingRoomTempEvent.temperature,
+                 livingRoomHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(livingRoomTempEvent.temperature, livingRoomHumidEvent.relative_humidity))
+        );
+        mqttClient.publish(MQTT_TOPIC, measureString, false);
         placeMeasure(currentMeasure, INSTANT);
 
         if (DEBUG_CASE2) {
