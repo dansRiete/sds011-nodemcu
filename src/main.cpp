@@ -1007,18 +1007,6 @@ void loop() {
     byte currentHour = hour(currentTime);
     byte currentDay = day(currentTime);
 
-    /*if (DEBUG_CASE2 && (millis() / 1000) % 300 == 0 && currentMinute != lastLogMinute) {
-        lastLogMinute = currentMinute;
-        Serial.print("currentMinute: ");
-        Serial.print(currentMinute);
-        Serial.print(", currentHour: ");
-        Serial.print(currentHour);
-        Serial.print(", lastMinutesAverageMinute: ");
-        Serial.print(lastMinutesAverageMinute);
-        Serial.print(", last1HourAverageHour: ");
-        Serial.println(last1HourAverageHour);
-    }*/
-
     if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
         lastMinutesAverageMinute = currentMinute;
         const Measure &measure =
@@ -1060,8 +1048,10 @@ void loop() {
         signed short int pm25 = NULL_MEASURE_VALUE;
         signed short int pm10 = NULL_MEASURE_VALUE;
         if (pm.isOk()) {
-            pm25 = round(pm.pm25*100);
-            pm10 = round(pm.pm10*100);
+            int round3 = round(pm.pm25 * 100);
+            int round4 = round(pm.pm10 * 100);
+            pm25 = round3 > 32767 ? 32767 : round3;
+            pm10 = round4 > 32767 ? 32767 : round4;
         }
 
         sensors_event_t roofTempEvent, roofHumidEvent;
@@ -1128,10 +1118,6 @@ void loop() {
 
         if (DEBUG_CASE2) {
             Serial.print(numberOfEveryMsrPlaced); Serial.print(". Got a measure: "); printMeasure(currentMeasure);
-
-//            Serial.print("DHT2130: t="); Serial.print(roofTempEvent.temperature); ; Serial.print(", outRh="); Serial.println(roofHumidEvent.relative_humidity);
-//            Serial.print("DHT21fa: t="); Serial.print(windowTempEvent.temperature); ; Serial.print(", outRh="); Serial.println(windowHumidEvent.relative_humidity);
-//            Serial.print("DHT2214: t="); Serial.print(livingRoomTempEvent.temperature); ; Serial.print(", outRh="); Serial.println(livingRoomHumidEvent.relative_humidity);
         }
 
         minuteRollupAveragedMeasure = calculateAverage(currentTime, period15m, instantMeasures, INSTANT_MEASURES_NUMBER, true);
