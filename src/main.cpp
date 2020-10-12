@@ -319,7 +319,7 @@ void loop() {
     unsigned long sinceLastLightSwitchTimestamp = millis() - lastLightSwitchTs;
     boolean newLightState = !digitalRead(LIGHT_PIN);
 
-    if (!fanState && lightState && !fanEngagedMsg && millisToSeconds(sinceLastLightSwitchTimestamp) > fanEngagementThresholdMinutes) {
+    if (!fanState && lightState && !fanEngagedMsg && millisToSeconds(sinceLastLightSwitchTimestamp) > fanEngagementThresholdMinutes * 60) {
         issueFanArmingMessage();
     }
 
