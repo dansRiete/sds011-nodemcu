@@ -174,15 +174,15 @@ float calculateAbsoluteHumidity(double temp, double rh) {
 }
 
 float calculateOutdoorAbsoluteHumidity(Measure &measure){
-    if (measure.inTemp == NULL_MEASURE_VALUE || measure.inRh == NULL_MEASURE_VALUE) {
-        return NULL_MEASURE_VALUE;
+    if (measure.outTemp == NULL_MEASURE_VALUE || measure.outRh == NULL_MEASURE_VALUE) {
+        return NULL_MEASURE_VALUE / 100.0;
     }
     return calculateAbsoluteHumidity(round1(measure.outTemp/100.0), round1(measure.outRh/100.0));
 }
 
 float calculateIndoorAbsoluteHumidity(Measure &measure){
     if (measure.inTemp == NULL_MEASURE_VALUE || measure.inRh == NULL_MEASURE_VALUE) {
-        return NULL_MEASURE_VALUE;
+        return NULL_MEASURE_VALUE / 100.0;
     }
     return calculateAbsoluteHumidity(round1(measure.inTemp/100.0), round1(measure.inRh/100.0));
 }
