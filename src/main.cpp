@@ -32,6 +32,8 @@ const boolean DEBUG_CASE2 = true;
 #define DHT21_ROOF_PIN 12
 #define DHT21_WINDOW_PIN 4
 #define DHT22_LIVING_ROOM_PIN 13
+#define SDS_RX_PIN 2
+#define SDS_DX_PIN 0
 
 #define EEPROM_DAILY_STORED_MEASURES_NUMBER 120
 #define EEPROM_HOURLY_STORED_MEASURES_NUMBER 24
@@ -47,15 +49,13 @@ const boolean DEBUG_CASE2 = true;
 const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
 
-const byte SENSOR_RX_PIN = 2;
-const byte SENSOR_DX_PIN = 0;
 unsigned long int currentTimeMillisTimer = 0;
 byte step = 1;
 enum ContentType {HTML, CSV, TEXT};
 enum MeasureType {INSTANT, MINUTE, HOURLY, DAILY};
 MDNSResponder mdns;
 ESP8266WebServer server(80);
-SdsDustSensor sds(SENSOR_RX_PIN, SENSOR_DX_PIN);
+SdsDustSensor sds(SDS_RX_PIN, SDS_DX_PIN);
 DHT_Unified dht21Roof(DHT21_ROOF_PIN, DHT21);
 DHT_Unified dht21Window(DHT21_WINDOW_PIN, DHT21);
 DHT_Unified dht22LivingRoom(DHT22_LIVING_ROOM_PIN, DHT22);
@@ -1006,6 +1006,7 @@ void loop() {
     byte currentMinute = minute(currentTime);
     byte currentHour = hour(currentTime);
     byte currentDay = day(currentTime);
+    int currentYear = year(currentTime);
 
     if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
         lastMinutesAverageMinute = currentMinute;
@@ -1139,6 +1140,10 @@ void loop() {
         if(logCounter % 60 == 0 && DEBUG_CASE2) {
             Serial.print("Max measuring time: ");
             Serial.println(maxMeasuringTime);
+        }
+
+        if (currentYear < 2020) {
+            syncTime();
         }
     }
 
