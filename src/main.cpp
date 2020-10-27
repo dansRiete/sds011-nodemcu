@@ -48,6 +48,7 @@ const boolean DEBUG_CASE2 = true;
 #define MQTT_USER "alexkzk"
 #define MQTT_PASSWORD "Vlena<G13"
 #define MQTT_PORT 1883
+#define UTC_HOURS_SHIFT 2
 const byte EEPROM_HOURLY_CURSOR_POSITION_ADDRESS = EEPROM_DAILY_CURSOR_POSITION_ADDRESS + 4;
 const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.txt";
 
@@ -208,17 +209,17 @@ char* measureToString(Measure measure, boolean rollup) {
              "%s%s - PM2.5 = %s, PM10 = %s, IN[%s-%s-%s], OUT[%s%s-%s-%s, min=%s, max=%s]",
              getTimeString(measure.measureTime),
              rollup ? "R" : "",
-             pm25 == NULL_MEASURE_VALUE ? nullString : String(pm25).c_str(),
-             pm10 == NULL_MEASURE_VALUE ? nullString : String(pm10).c_str(),
-             inTemp == NULL_MEASURE_VALUE ? nullString : (String(inTemp) + String("C")).c_str(),
-             inRh == NULL_MEASURE_VALUE ? nullString : (String(inRh) + String("%")).c_str(),
-             inAh == NULL_MEASURE_VALUE ? nullString : (String(inAh) + String("g/m3")).c_str(),
-             outTemp == NULL_MEASURE_VALUE ? nullString : (String(outTemp) + String("C")).c_str(),
+             pm25 < -90 ? nullString : String(pm25).c_str(),
+             pm10 < -90 ? nullString : String(pm10).c_str(),
+             inTemp < -90 ? nullString : (String(inTemp) + String("C")).c_str(),
+             inRh < -90 ? nullString : (String(inRh) + String("%")).c_str(),
+             inAh < -90 ? nullString : (String(inAh) + String("g/m3")).c_str(),
+             outTemp < -90 ? nullString : (String(outTemp) + String("C")).c_str(),
              measure.serviceInfo,
-             outRh == NULL_MEASURE_VALUE ? nullString : (String(outRh) + String("%")).c_str(),
-             outAh == NULL_MEASURE_VALUE ? nullString : (String(outAh) + String("g/m3")).c_str(),
-             minOutTemp == NULL_MEASURE_VALUE ? nullString : (String(minOutTemp) + String("C")).c_str(),
-             maxOutTemp == NULL_MEASURE_VALUE ? nullString : (String(maxOutTemp) + String("C")).c_str()
+             outRh < -90 ? nullString : (String(outRh) + String("%")).c_str(),
+             outAh < -90 ? nullString : (String(outAh) + String("g/m3")).c_str(),
+             minOutTemp < -90 ? nullString : (String(minOutTemp) + String("C")).c_str(),
+             maxOutTemp < -90 ? nullString : (String(maxOutTemp) + String("C")).c_str()
     );
     return measureString;
 }
@@ -338,7 +339,7 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
     Measure *measuresArray;
     int *measuresNumberPlaced;
     int measuresNumber;
-    
+
     switch (measureType) {
         case INSTANT:
             index = &instantMeasureIndex;
@@ -649,7 +650,7 @@ void syncTime() {
         std::string unixTime = timePayload.substr(timePosition + 10, timePosition + 10 + 10);
         String a = unixTime.c_str();
         Serial.println(payload);
-        setTime((time_t)a.toInt() + 3 * 3600);
+        setTime((time_t)a.toInt() + UTC_HOURS_SHIFT * 3600);
         Serial.print("Time synced. Current time is ");
         Serial.println(timeToString(now()));
         http.end();   //Close connection
