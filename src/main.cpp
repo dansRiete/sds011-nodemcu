@@ -62,6 +62,7 @@ DHT_Unified dht21Roof(DHT21_ROOF_PIN, DHT21);
 DHT_Unified dht21Window(DHT21_WINDOW_PIN, DHT21);
 DHT_Unified dht22LivingRoom(DHT22_LIVING_ROOM_PIN, DHT22);
 const char csvHeader[] = "date, pm2.5, pm10, inTemp, inRH, inAH, outTemp, outRH, outAH\n";
+const char nullString[] = "NULL";
 EEPROM_Rotate EEPROMr;
 WiFiClient wclient;
 PubSubClient mqttClient(wclient);
@@ -152,15 +153,24 @@ char* getTimeString(time_t time) {
     return measureString;
 }
 
-double roundTo(double value, int accuracy){
+double roundTo(double value, int accuracy) {
+    if (value == NULL_MEASURE_VALUE) {
+        return NULL_MEASURE_VALUE;
+    }
     return round(value * accuracy) / accuracy;
 }
 
 double round1(double value){
+    if (value == NULL_MEASURE_VALUE) {
+        return NULL_MEASURE_VALUE;
+    }
     return roundTo(value , 10);
 }
 
 double round2(double value){
+    if (value == NULL_MEASURE_VALUE) {
+        return NULL_MEASURE_VALUE;
+    }
     return roundTo(value , 100);
 }
 
@@ -184,21 +194,31 @@ float calculateIndoorAbsoluteHumidity(Measure &measure){
 
 char* measureToString(Measure measure, boolean rollup) {
     static char measureString[MAX_MEASURES_STRING_LENGTH];
+    double pm25 = round1(measure.pm25 / 100.0);
+    double pm10 = round1(measure.pm10 / 100.0);
+    double inTemp = round1(measure.inTemp / 100.0);
+    double inRh = round1(measure.inRh / 100.0);
+    double inAh = round2(calculateIndoorAbsoluteHumidity(measure));
+    double outTemp = round1(measure.outTemp / 100.0);
+    double outRh = round1(measure.outRh / 100.0);
+    double outAh = round2(calculateOutdoorAbsoluteHumidity(measure));
+    double minOutTemp = round1(measure.minOutTemp / 100.0);
+    double maxOutTemp = round1(measure.maxOutTemp / 100.0);
     snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
-             "%s%s - PM2.5 = %.1f, PM10 = %.1f, IN[%.1fC-%.0f%%-%.1fg/m3], OUT[%.1fC%s-%.0f%%-%.1fg/m3, min=%.1fC, max=%.1fC]",
+             "%s%s - PM2.5 = %s, PM10 = %s, IN[%s-%s-%s], OUT[%s%s-%s-%s, min=%s, max=%s]",
              getTimeString(measure.measureTime),
              rollup ? "R" : "",
-             round1(measure.pm25 / 100.0),
-             round1(measure.pm10 / 100.0),
-             round1(measure.inTemp / 100.0),
-             round1(measure.inRh / 100.0),
-             round2(calculateIndoorAbsoluteHumidity(measure)),
-             round1(measure.outTemp / 100.0),
+             pm25 == NULL_MEASURE_VALUE ? nullString : String(pm25).c_str(),
+             pm10 == NULL_MEASURE_VALUE ? nullString : String(pm10).c_str(),
+             inTemp == NULL_MEASURE_VALUE ? nullString : (String(inTemp) + String("C")).c_str(),
+             inRh == NULL_MEASURE_VALUE ? nullString : (String(inRh) + String("%")).c_str(),
+             inAh == NULL_MEASURE_VALUE ? nullString : (String(inAh) + String("g/m3")).c_str(),
+             outTemp == NULL_MEASURE_VALUE ? nullString : (String(outTemp) + String("C")).c_str(),
              measure.serviceInfo,
-             round1(measure.outRh / 100.0),
-             round2(calculateOutdoorAbsoluteHumidity(measure)),
-             round1(measure.minOutTemp / 100.0),
-             round1(measure.maxOutTemp / 100.0)
+             outRh == NULL_MEASURE_VALUE ? nullString : (String(outRh) + String("%")).c_str(),
+             outAh == NULL_MEASURE_VALUE ? nullString : (String(outAh) + String("g/m3")).c_str(),
+             minOutTemp == NULL_MEASURE_VALUE ? nullString : (String(minOutTemp) + String("C")).c_str(),
+             maxOutTemp == NULL_MEASURE_VALUE ? nullString : (String(maxOutTemp) + String("C")).c_str()
     );
     return measureString;
 }
