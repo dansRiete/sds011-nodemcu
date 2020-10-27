@@ -13,10 +13,11 @@
 
 #define WIFI_MAX_RETRIES 20
 #define MQTT_MAX_RETRIES 1
-#define DEFAULT_MEASURING_DURATION 5*1000
-#define DEFAULT_SLEEPING_PERIOD 55*1000
-#define MINUTE_AVERAGE_PERIOD 10 * 60
-#define HOUR_AVERAGE_PERIOD 1 * 3600
+#define DEFAULT_MEASURING_DURATION_MILLIS 5 * 1000
+#define DEFAULT_SLEEPING_PERIOD_MILLIS 55 * 1000
+#define MINUTE_AVERAGE_PERIOD_SEC 10 * 60
+#define HOUR_AVERAGE_PERIOD_SEC 1 * 3600
+#define DAILY_AVERAGE_PERIOD_SEC 24 * 3600
 int logCounter = 0;
 int maxMeasuringTime = 0;
 unsigned measuringDuration;
@@ -27,6 +28,7 @@ long period1d;
 #define HTTP_RESPONSE_CHUNKS_SIZE 20
 #define MAX_MEASURES_STRING_LENGTH 170
 #define NULL_MEASURE_VALUE -10000
+#define SIGNED_SHORT_MAX_VALUE 32767
 const boolean DEBUG = false;
 const boolean DEBUG_CASE2 = true;
 #define DHT21_ROOF_PIN 12
@@ -52,7 +54,7 @@ const char TIME_API_URL[] = "http://worldtimeapi.org/api/timezone/Europe/Kiev.tx
 unsigned long int currentTimeMillisTimer = 0;
 byte step = 1;
 enum ContentType {HTML, CSV, TEXT};
-enum MeasureType {INSTANT, MINUTE, HOURLY, DAILY};
+enum MeasureType {INSTANT, MINUTELY, HOURLY, DAILY};
 MDNSResponder mdns;
 ESP8266WebServer server(80);
 SdsDustSensor sds(SDS_RX_PIN, SDS_DX_PIN);
@@ -66,7 +68,7 @@ PubSubClient mqttClient(wclient);
 
 struct Measure {
     time_t measureTime;
-    signed short int pm25;
+    signed short int pm25;      //  todo change to unsigned short and multiple by 10 not 100 to increase max range width
     signed short int pm10;
     signed short int outTemp;
     signed short int minOutTemp;
@@ -74,7 +76,7 @@ struct Measure {
     signed short int outRh;
     signed short int inTemp;
     signed short int inRh;
-    boolean window;
+    boolean window;     //  todo replace by measure place enum
     char serviceInfo[20];
 };
 struct SimpleMeasure {
@@ -118,19 +120,12 @@ struct Measure dailyMeasures[DAILY_MEASURES_NUMBER];
 time_t lastMinAvg = NULL_MEASURE_VALUE;
 time_t lastHourAvg = NULL_MEASURE_VALUE;
 
-void computeAvg(const Measure &measure, int &pm25Sum, int &pm10Sum, int &outTempSum, int &outRhSum, int &inTempSum,
-                int &inRhSum, int &pm25Counter, int &pm10Counter, int &outTempCounter, int &outRhCounter,
-                int &inTempCounter, int &inRhCounter, int &windowCounter, int &measurementsCounter, short &minTemp,
-                short &maxTemp);
-
 int dailyMeasuresIndex = -1;
 boolean dailyMeasureFirstPass = true;
 
 byte lastMinutesAverageMinute = NULL_MEASURE_VALUE;
 byte last1HourAverageHour = NULL_MEASURE_VALUE;
 byte last1DayAverageDay = NULL_MEASURE_VALUE;
-
-byte lastLogMinute = NULL_MEASURE_VALUE;
 
 int numberOfEveryMsrPlaced = 0;
 int numberOf15mMsrPlaced = 0;
@@ -267,8 +262,8 @@ void printMeasure(Measure measure) {
 }
 
 boolean isNullMeasure(const Measure& measure){
-    return measure.pm10 == NULL_MEASURE_VALUE && measure.pm25 == NULL_MEASURE_VALUE && measure.pm10 == NULL_MEASURE_VALUE
-           && measure.outTemp == NULL_MEASURE_VALUE && measure.minOutTemp == NULL_MEASURE_VALUE && measure.maxOutTemp == NULL_MEASURE_VALUE && measure.outRh == NULL_MEASURE_VALUE
+    return measure.pm10 == NULL_MEASURE_VALUE && measure.pm25 == NULL_MEASURE_VALUE
+           && measure.outTemp == NULL_MEASURE_VALUE && measure.outRh == NULL_MEASURE_VALUE
            && measure.inTemp == NULL_MEASURE_VALUE && measure.inRh == NULL_MEASURE_VALUE;
 }
 
@@ -332,7 +327,7 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
             measuresNumberPlaced = &numberOfEveryMsrPlaced;
             measuresNumber = INSTANT_MEASURES_NUMBER;
             break;
-        case MINUTE:
+        case MINUTELY:
             index = &minutesAvgMeasureIndex;
             firstPass = &minutesAvgMeasureFirstPass;
             measuresArray = every15minutesMeasures;
@@ -384,7 +379,7 @@ void placeMeasure(const Measure& measure, MeasureType measureType) {
 }
 
 bool isInIntervalOfSeconds(time_t currentTime, time_t measureTime, long intervalSec) {
-    if (measureTime == 0) {
+    if (measureTime == 0 || intervalSec == 0) {
         return false;
     }
     long currTimeTS = (long) currentTime;
@@ -400,97 +395,13 @@ void logAverage(const Measure &measure) {
             measure.maxOutTemp / 100.0);
 }
 
-Measure calculateAverage(time_t currentTime, int seconds, Measure* measuresSource, int measurementArraySize, boolean rollup) {
-    if (DEBUG_CASE2) {
-        Serial.println();
-        Serial.print(getTimeString(currentTime));
-        Serial.printf(" - Calculating %s", rollup ? "rollup " : "");
-        Serial.print(seconds);
-        Serial.print(" seconds average from next values:");
-        Serial.println();
-    }
-    int pm25Sum = 0, pm10Sum = 0, outTempSum = 0, outRhSum = 0, inTempSum = 0, inRhSum = 0;
-    int pm25Counter = 0, pm10Counter = 0, outTempCounter = 0, outRhCounter = 0, inTempCounter = 0, inRhCounter = 0,
-    windowCounter = 0, measurementsCounter = 0;
-    signed short int minTemp = 32767;
-    signed short int maxTemp = -32768;
-    for (int i = 0; i < measurementArraySize; i++) {
-        Measure measure = measuresSource[i];
-        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds)) {
-            computeAvg(measure, pm25Sum, pm10Sum, outTempSum, outRhSum, inTempSum, inRhSum, pm25Counter, pm10Counter,
-                       outTempCounter,
-                       outRhCounter, inTempCounter, inRhCounter, windowCounter, measurementsCounter, minTemp, maxTemp);
-        }
-    }
-    if (DEBUG_CASE2) {
-        Serial.println();
-    }
-    Measure result;
-
-    time_t lastTime = NULL_MEASURE_VALUE;
-    if (seconds == period15m) {
-        if (rollup) {
-            lastTime = lastMinAvg;
-        } else {
-            lastMinAvg = currentTime - seconds;
-        }
-    } else if(seconds == period1h) {
-        if (rollup) {
-            lastTime = lastHourAvg;
-        } else {
-            lastHourAvg = currentTime - seconds;
-        }
-    }
-
-    bool window = outTempCounter <= 0 ? true : ((float) windowCounter / (float) outTempCounter > 0.5);
-    if (measurementsCounter != 0) {
-        result = {
-                rollup ? (lastTime != NULL_MEASURE_VALUE ? lastTime + seconds : currentTime) : currentTime - seconds,
-                static_cast<short>(pm25Counter == 0 ? NULL_MEASURE_VALUE : pm25Sum / pm25Counter),
-                static_cast<short>(pm10Counter == 0 ? NULL_MEASURE_VALUE : pm10Sum / pm10Counter),
-                static_cast<short>(outTempCounter == 0 ? NULL_MEASURE_VALUE : outTempSum / outTempCounter),
-                minTemp,
-                maxTemp,
-                static_cast<short>(outRhCounter == 0 ? NULL_MEASURE_VALUE : outRhSum / outRhCounter),
-                static_cast<short>(inTempCounter == 0 ? NULL_MEASURE_VALUE : inTempSum / inTempCounter),
-                static_cast<short>(inRhCounter == 0 ? NULL_MEASURE_VALUE : inRhSum / inRhCounter),
-                window
-        };
+short averagePeriods(int summ, int periods, int targetPeriods) {
+    if (periods == 0 || (targetPeriods > 0 && periods != targetPeriods)) {
+        return NULL_MEASURE_VALUE; 
     } else {
-        result = nullMeasure;
+        int result = summ / periods;
+        return result > SIGNED_SHORT_MAX_VALUE ? SIGNED_SHORT_MAX_VALUE : result;
     }
-
-    if (!rollup && seconds == period1d && measurementsCounter != 24) {
-        Serial.printf("Not enough measures for daily average %d\n", measurementsCounter);
-        result = nullMeasure;
-    }
-
-    if (window) {
-        strcpy(result.serviceInfo, "(W)");
-    } else {
-        strcpy(result.serviceInfo, "(R)");
-    }
-
-    if (!rollup && seconds == period15m) {
-        numberOf15mAveraged += measurementsCounter;
-    } else {
-        numberOf1hAveraged += measurementsCounter;
-    }
-
-    if (DEBUG_CASE2) {
-        Serial.print("There were ");
-        Serial.print(measurementsCounter);
-        Serial.print(" elements averaged. Total averaged: ");
-        Serial.print(seconds == period15m ? numberOf15mAveraged : numberOf1hAveraged);
-        Serial.print(". Total placed: "); Serial.println(seconds == period15m ? numberOf15mMsrPlaced : numberOf1hMsrPlaced);
-        if (!isNullMeasure(result)) {
-            Serial.print("Averaged measure: ");
-            Serial.println(measureToString(result));
-        }
-        Serial.println();
-    }
-
-    return result;
 }
 
 void computeAvg(const Measure &measure, int &pm25Sum, int &pm10Sum, int &outTempSum, int &outRhSum, int &inTempSum,
@@ -532,6 +443,117 @@ void computeAvg(const Measure &measure, int &pm25Sum, int &pm10Sum, int &outTemp
         inRhSum += measure.inRh;
         inRhCounter++;
     }
+}
+
+Measure calculateAverage(time_t currentTime, MeasureType measureType, Measure* measuresSource, int measurementArraySize, boolean rollup) {
+
+    long seconds = 0;
+    int targetPeriods = 0;
+    switch (measureType) {
+        case MINUTELY :
+            seconds = period15m;
+            break;
+        case HOURLY :
+            seconds = period1h;
+            break;
+        case DAILY :
+            targetPeriods = 24;
+            seconds = period1d;
+            break;
+        case INSTANT :
+            return nullMeasure;
+    }
+    
+    if (DEBUG_CASE2) {
+        Serial.println();
+        Serial.print(getTimeString(currentTime));
+        Serial.printf(" - Calculating %s", rollup ? "rollup " : "");
+        Serial.print(seconds);
+        Serial.print(" seconds average from next values:");
+        Serial.println();
+    }
+    
+    int pm25Sum = 0, pm10Sum = 0, outTempSum = 0, outRhSum = 0, inTempSum = 0, inRhSum = 0;
+    int pm25Counter = 0, pm10Counter = 0, outTempCounter = 0, outRhCounter = 0, inTempCounter = 0, inRhCounter = 0,
+    windowCounter = 0, measurementsCounter = 0;
+    signed short int minTemp = 32767;
+    signed short int maxTemp = -32768;
+    for (int i = 0; i < measurementArraySize; i++) {
+        Measure measure = measuresSource[i];
+        if (isInIntervalOfSeconds(currentTime, measure.measureTime, seconds)) {
+            computeAvg(measure, pm25Sum, pm10Sum, outTempSum, outRhSum, inTempSum, inRhSum, pm25Counter, pm10Counter,
+                       outTempCounter, outRhCounter, inTempCounter, inRhCounter, windowCounter, measurementsCounter,
+                       minTemp, maxTemp);
+        }
+    }
+    if (DEBUG_CASE2) {
+        Serial.println();
+    }
+    Measure result;
+
+    time_t lastTime = NULL_MEASURE_VALUE;
+    if (seconds == period15m) {
+        if (rollup) {
+            lastTime = lastMinAvg;
+        } else {
+            lastMinAvg = currentTime - seconds;
+        }
+    } else if(seconds == period1h) {
+        if (rollup) {
+            lastTime = lastHourAvg;
+        } else {
+            lastHourAvg = currentTime - seconds;
+        }
+    }
+
+    bool window = outTempCounter <= 0 ? true : ((float) windowCounter / (float) outTempCounter > 0.5);
+    if (measurementsCounter != 0) {
+        result = {
+                rollup ? (lastTime != NULL_MEASURE_VALUE ? lastTime + seconds : currentTime) : currentTime - seconds,
+                averagePeriods(pm25Sum, pm25Counter, targetPeriods),
+                averagePeriods(pm10Sum, pm10Counter, targetPeriods),
+                averagePeriods(outTempSum, outTempCounter, targetPeriods),
+                minTemp,
+                maxTemp,
+                averagePeriods(outRhSum, outRhCounter, targetPeriods),
+                averagePeriods(inTempSum, inTempCounter, targetPeriods),
+                averagePeriods(inRhSum, inRhCounter, targetPeriods),
+                window
+        };
+    } else {
+        result = nullMeasure;
+    }
+
+    if (isNullMeasure(result)) {
+        result = nullMeasure;
+    }
+
+    if (window) {
+        strcpy(result.serviceInfo, "(W)");
+    } else {
+        strcpy(result.serviceInfo, "(R)");
+    }
+
+    if (DEBUG_CASE2) {
+
+        if (!rollup && seconds == period15m) {
+            numberOf15mAveraged += measurementsCounter;
+        } else {
+            numberOf1hAveraged += measurementsCounter;
+        }
+        Serial.print("There were ");
+        Serial.print(measurementsCounter);
+        Serial.print(" elements averaged. Total averaged: ");
+        Serial.print(seconds == period15m ? numberOf15mAveraged : numberOf1hAveraged);
+        Serial.print(". Total placed: "); Serial.println(seconds == period15m ? numberOf15mMsrPlaced : numberOf1hMsrPlaced);
+        if (!isNullMeasure(result)) {
+            Serial.print("Averaged measure: ");
+            Serial.println(measureToString(result));
+        }
+        Serial.println();
+    }
+
+    return result;
 }
 
 void connectToWifi() {
@@ -594,12 +616,6 @@ void connectToMqtt() {
     }
 }
 
-time_t rtcTime() {
-//    Time t = rtc.time();
-//    return makeTime({t.sec, t.min, t.hr, 1, t.date, t.mon, static_cast<uint8_t>(t.yr - 1970)});   //time elements
-    return now();
-}
-
 void syncTime() {
     HTTPClient http;
     Serial.print("Getting current time from ");
@@ -615,7 +631,7 @@ void syncTime() {
         Serial.println(payload);
         setTime((time_t)a.toInt() + 3 * 3600);
         Serial.print("Time synced. Current time is ");
-        Serial.println(timeToString(rtcTime()));
+        Serial.println(timeToString(now()));
         http.end();   //Close connection
     } else {
         Serial.print("Time syncing failed. Server respond with next code: ");
@@ -634,7 +650,7 @@ void sendChunkedContent(MeasureType measureType, ContentType contentType, boolea
             currMeasures = instantMeasures;
             measuresSize = INSTANT_MEASURES_NUMBER;
             break;
-        case MINUTE:
+        case MINUTELY:
             currMeasures = every15minutesMeasures;
             rollupMeasure = minuteRollupAveragedMeasure;
             measuresSize = MINUTES_AVG_MEASURES_NUMBER;
@@ -788,7 +804,7 @@ void configureHttpServer() {
     });
 
     server.on("/avg/minute", []() {
-        sendChunkedContent(MINUTE, HTML, false);
+        sendChunkedContent(MINUTELY, HTML, false);
     });
 
     server.on("/avg/hourly", []() {
@@ -804,7 +820,7 @@ void configureHttpServer() {
     });
 
     server.on("/csv/15", []() {
-        sendChunkedContent(MINUTE, CSV, false);
+        sendChunkedContent(MINUTELY, CSV, false);
     });
 
     server.on("/csv/60", []() {
@@ -824,7 +840,7 @@ void configureHttpServer() {
         resetTimer();
         last1HourAverageHour = hour;
         lastMinutesAverageMinute = minute;
-        server.send(200, "text/plain", timeToString(rtcTime()));
+        server.send(200, "text/plain", timeToString(now()));
     });
 
     server.on("/config", HTTP_POST, []() {
@@ -847,7 +863,7 @@ void configureHttpServer() {
     server.on("/config", HTTP_GET, []() {
         char parameters[250];
         snprintf(parameters, 250, "measuringDuration = %d, sleepingPeriod = %d, 15avgPeriod = %d, 1hPeriod = %d, currentTime = %s",
-                 measuringDuration, sleepingPeriod, period15m, period1h, timeToString(rtcTime()));
+                 measuringDuration, sleepingPeriod, period15m, period1h, timeToString(now()));
         server.send(200, "text/plain", String(parameters));
     });
 
@@ -889,11 +905,11 @@ void setup() {
     Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println("%");
     Serial.println("------------------------------------");
 
-    measuringDuration = DEFAULT_MEASURING_DURATION;
-    sleepingPeriod = DEFAULT_SLEEPING_PERIOD;
-    period15m = MINUTE_AVERAGE_PERIOD;
-    period1h = HOUR_AVERAGE_PERIOD;
-    period1d = 24 * 3600;
+    measuringDuration = DEFAULT_MEASURING_DURATION_MILLIS;
+    sleepingPeriod = DEFAULT_SLEEPING_PERIOD_MILLIS;
+    period15m = MINUTE_AVERAGE_PERIOD_SEC;
+    period1h = HOUR_AVERAGE_PERIOD_SEC;
+    period1d = DAILY_AVERAGE_PERIOD_SEC;
     Serial.printf("measuringDuration: %d, sleepingPeriod: %d, period15m: %ld, period1h: %ld, period1d: %ld",
                   measuringDuration, sleepingPeriod, period15m, period1h, period1d);
 
@@ -990,7 +1006,7 @@ void setup() {
     Serial.println();
 
     if (DEBUG) {
-        Serial.print(getTimeString(rtcTime())); Serial.println(" - The sensor should be woken now");
+        Serial.print(getTimeString(now())); Serial.println(" - The sensor should be woken now");
     }
 }
 
@@ -998,7 +1014,7 @@ void loop() {
 
     delay(20);
 
-    time_t currentTime = rtcTime();
+    time_t currentTime = now();
     byte currentMinute = minute(currentTime);
     byte currentHour = hour(currentTime);
     byte currentDay = day(currentTime);
@@ -1007,21 +1023,21 @@ void loop() {
     if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
         lastMinutesAverageMinute = currentMinute;
         const Measure &measure =
-                calculateAverage(currentTime, period15m, instantMeasures, INSTANT_MEASURES_NUMBER, false);
-        placeMeasure(measure, MINUTE);
+                calculateAverage(currentTime, MINUTELY, instantMeasures, INSTANT_MEASURES_NUMBER, false);
+        placeMeasure(measure, MINUTELY);
     }
 
     if (currentHour % (period1h / 3600) == 0 && currentHour != last1HourAverageHour) {
         last1HourAverageHour = currentHour;
         const Measure &measure =
-                calculateAverage(currentTime, period1h, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, false);
+                calculateAverage(currentTime, HOURLY, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, false);
         placeMeasure(measure, HOURLY);
     }
 
     if (currentDay != last1DayAverageDay) {
         last1DayAverageDay = currentDay;
         const Measure &measure =
-                calculateAverage(currentTime, period1d, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, false);
+                calculateAverage(currentTime, DAILY, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, false);
         placeMeasure(measure, DAILY);
     }
 
@@ -1047,8 +1063,8 @@ void loop() {
         if (pm.isOk()) {
             int round3 = round(pm.pm25 * 100);
             int round4 = round(pm.pm10 * 100);
-            pm25 = round3 > 32767 ? 32767 : round3;
-            pm10 = round4 > 32767 ? 32767 : round4;
+            pm25 = round3 > SIGNED_SHORT_MAX_VALUE ? SIGNED_SHORT_MAX_VALUE : round3;
+            pm10 = round4 > SIGNED_SHORT_MAX_VALUE ? SIGNED_SHORT_MAX_VALUE : round4;
         }
 
         sensors_event_t roofTempEvent, roofHumidEvent;
@@ -1117,9 +1133,9 @@ void loop() {
             Serial.print(numberOfEveryMsrPlaced); Serial.print(". Got a measure: "); printMeasure(currentMeasure);
         }
 
-        minuteRollupAveragedMeasure = calculateAverage(currentTime, period15m, instantMeasures, INSTANT_MEASURES_NUMBER, true);
-        hourlyRollupAveragedMeasure = calculateAverage(currentTime, period1h, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, true);
-        dailyRollupAveragedMeasure = calculateAverage(currentTime, period1d, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, true);
+        minuteRollupAveragedMeasure = calculateAverage(currentTime, MINUTELY, instantMeasures, INSTANT_MEASURES_NUMBER, true);
+        hourlyRollupAveragedMeasure = calculateAverage(currentTime, HOURLY, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, true);
+        dailyRollupAveragedMeasure = calculateAverage(currentTime, DAILY, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, true);
 
         if (sleepingPeriod > 0) {
             WorkingStateResult state = sds.sleep();
