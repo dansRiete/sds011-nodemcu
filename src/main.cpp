@@ -212,10 +212,6 @@ char* measureToString(Measure measure) {
     return measureToString(measure, false);
 }
 
-char* measureToMqttString(Measure measure) {
-    return measureToString(measure, false);
-}
-
 char* measureToString(SimpleMeasure measure) {
     Measure measure1 = {
             measure.measureTime,
