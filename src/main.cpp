@@ -52,8 +52,8 @@ unsigned long int currentTimeMillisTimer = 0;
 byte step = 1;
 enum ContentType {HTML, CSV, TEXT};
 enum MeasureType {INSTANT, MINUTE, HOURLY, DAILY};
-MDNSResponder mdns;
-ESP8266WebServer server(80);
+//MDNSResponder mdns;
+//ESP8266WebServer server(80);
 const char csvHeader[] = "date, pm2.5, pm10, inTemp, inRH, inAH, outTemp, outRH, outAH\n";
 EEPROM_Rotate EEPROMr;
 WiFiClient wclient;
@@ -698,8 +698,8 @@ void sendChunkedContent(MeasureType measureType, ContentType contentType, boolea
             rollupMeasure = nullMeasure;
     }
 
-    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    server.send(200, "text/html", "");
+//    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+//    server.send(200, "text/html", "");
     int currentMeasureIndex = measuresSize - 1;
 //    Serial.printf("Measures to send size: %d\n", measuresSize);
     boolean anyDataHasBeenSent = false;
@@ -727,13 +727,13 @@ void sendChunkedContent(MeasureType measureType, ContentType contentType, boolea
             }
             currentMeasureIndex--;
         }
-        if (thereIsData) {
+        /*if (thereIsData) {
             server.sendContent(cont);
-        }
+        }*/
     } while (currentMeasureIndex > 0);
 
-    server.sendContent("");
-    server.client().stop();
+    /*server.sendContent("");
+    server.client().stop();*/
 }
 
 void clearDailyEeprom(){
@@ -762,7 +762,7 @@ void clearHourlyEeprom(){
     EEPROMr.commit();
 }
 
-void configureHttpServer() {
+/*void configureHttpServer() {
 
     server.on("/restart", []() {
         ESP.restart();
@@ -850,7 +850,7 @@ void configureHttpServer() {
     });
 
     server.begin();
-}
+}*/
 
 void setup() {
 
@@ -884,11 +884,13 @@ void setup() {
     Serial.println(""); Serial.print("Connected to "); Serial.println(ssid);
     Serial.print("IP address: "); Serial.println(WiFi.localIP());
 
-    if (mdns.begin("esp8266", WiFi.localIP())) {
+    /*if (mdns.begin("esp8266", WiFi.localIP())) {
         Serial.println("MDNS responder started");
     }
 
-    configureHttpServer();
+    configureHttpServer();*/
+
+    WiFi.softAPdisconnect (true);
 
     resetTimer();
 
@@ -974,7 +976,7 @@ void loop() {
     byte currentHour = hour(currentTime);
     byte currentDay = day(currentTime);
 
-    if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
+    /*if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
         lastMinutesAverageMinute = currentMinute;
         const Measure &measure =
                 calculateAverage(currentTime, period15m, instantMeasures, INSTANT_MEASURES_NUMBER, false);
@@ -993,9 +995,9 @@ void loop() {
         const Measure &measure =
                 calculateAverage(currentTime, period1d, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, false);
         placeMeasure(measure, DAILY);
-    }
+    }*/
 
-    server.handleClient();
+//    server.handleClient();
     mqttClient.loop();
 
     if (millis() - currentTimeMillisTimer > measuringDuration) {
@@ -1043,9 +1045,9 @@ void loop() {
             Serial.print(numberOfEveryMsrPlaced); Serial.print(". Got a measure: "); printMeasure(currentMeasure);
         }
 
-        minuteRollupAveragedMeasure = calculateAverage(currentTime, period15m, instantMeasures, INSTANT_MEASURES_NUMBER, true);
-        hourlyRollupAveragedMeasure = calculateAverage(currentTime, period1h, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, true);
-        dailyRollupAveragedMeasure = calculateAverage(currentTime, period1d, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, true);
+//        minuteRollupAveragedMeasure = calculateAverage(currentTime, period15m, instantMeasures, INSTANT_MEASURES_NUMBER, true);
+//        hourlyRollupAveragedMeasure = calculateAverage(currentTime, period1h, every15minutesMeasures, MINUTES_AVG_MEASURES_NUMBER, true);
+//        dailyRollupAveragedMeasure = calculateAverage(currentTime, period1d, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, true);
 
         if (sleepingPeriod > 0) {
             step = 2;
