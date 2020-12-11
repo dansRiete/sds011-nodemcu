@@ -10,6 +10,7 @@
 #include <ESP8266HTTPClient.h>
 #include <../lib/eeprom_rotate-master/src/EEPROM_Rotate.h>
 #include <../lib/PubSubClient-2.8.0/src/PubSubClient.h>
+#include <ArduinoOTA.h>
 
 #define WIFI_MAX_RETRIES 20
 #define MQTT_MAX_RETRIES 1
@@ -578,37 +579,22 @@ Measure calculateAverage(time_t currentTime, MeasureType measureType, Measure* m
 }
 
 void connectToWifi() {
-    String passPhrase = "ekvatorthebest";
-    WiFi.begin("ALEKSNET-ROOF", passPhrase);
+    String passPhrase = "ekvator<the>best";
+    /*IPAddress staticIp(192,168,1,80);
+    IPAddress gateWay(192,168,1,1);
+    IPAddress subnet(255,255,255,0);
+    IPAddress dns(8,8,8,8);
+    WiFi.config(staticIp, gateWay, subnet, dns, gateWay);*/
+    WiFi.begin("ALEKSNET-2", passPhrase);
     int retries = 0;
     while (WiFi.status() != WL_CONNECTED && retries < WIFI_MAX_RETRIES) {
         delay(500);
         Serial.print("Waiting for connection to ");
-        Serial.println("ALEKSNET-ROOF");
+        Serial.println("ALEKSNET-2");
         retries++;
     }
     if (WiFi.status() != WL_CONNECTED) {
-        retries = 0;
-        WiFi.begin("ALEKSNET", passPhrase);
-        while (WiFi.status() != WL_CONNECTED && retries < WIFI_MAX_RETRIES) {
-            delay(500);
-            Serial.print("Waiting for connection to ");
-            Serial.println("ALEKSNET");
-            retries++;
-        }
-    }
-    if (WiFi.status() != WL_CONNECTED) {
-        retries = 0;
-        WiFi.begin("ALEKSNET2", passPhrase);
-        while (WiFi.status() != WL_CONNECTED && retries < WIFI_MAX_RETRIES) {
-            delay(500);
-            Serial.print("Waiting for connection to ");
-            Serial.println("ALEKSNET2");
-            retries++;
-        }
-    }
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Could not connect to any WiFi");
+        Serial.println("Couldn't connect to WiFi");
     }
 }
 
@@ -945,6 +931,34 @@ void setup() {
     connectToWifi();
     connectToMqtt();
 
+    // Port defaults to 8266
+    // ArduinoOTA.setPort(8266);
+
+    // Hostname defaults to esp8266-[ChipID]
+    // ArduinoOTA.setHostname("myesp8266");
+
+    // No authentication by default
+    // ArduinoOTA.setPassword((const char *)"123");
+
+    ArduinoOTA.onStart([]() {
+        Serial.println("Start");
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
+
     syncTime();
 
     Serial.println(""); Serial.print("Connected to "); Serial.println(ssid);
@@ -1062,6 +1076,7 @@ void loop() {
         placeMeasure(measure, DAILY);
     }
 
+    ArduinoOTA.handle();
     server.handleClient();
     mqttClient.loop();
 
