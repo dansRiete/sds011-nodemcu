@@ -35,6 +35,7 @@ const boolean DEBUG_CASE2 = true;
 #define DHT21_ROOF_PIN 12
 #define DHT21_WINDOW_PIN 4
 #define DHT22_LIVING_ROOM_PIN 13
+#define DHT22_TERRACE_IN_PIN 16
 #define SDS_RX_PIN 2
 #define SDS_DX_PIN 0
 
@@ -67,6 +68,7 @@ SdsDustSensor sds(SDS_RX_PIN, SDS_DX_PIN);
 DHT_Unified dht21Roof(DHT21_ROOF_PIN, DHT21);
 DHT_Unified dht21Window(DHT21_WINDOW_PIN, DHT21);
 DHT_Unified dht22LivingRoom(DHT22_LIVING_ROOM_PIN, DHT22);
+DHT_Unified dht22TerraceIn(DHT22_TERRACE_IN_PIN, DHT22);
 const char csvHeader[] = "date, pm2.5, pm10, inTemp, inRH, inAH, outTemp, outRH, outAH\n";
 const char nullString[] = "NULL";
 EEPROM_Rotate EEPROMr;
@@ -107,7 +109,7 @@ const Measure nullMeasure = {0, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEA
 const SimpleMeasure nullSMeasure = {0, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE,
                                     NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE, NULL_MEASURE_VALUE};
 
-#define INSTANT_MEASURES_NUMBER 180
+/*#define INSTANT_MEASURES_NUMBER 180
 struct Measure instantMeasures[INSTANT_MEASURES_NUMBER];
 int instantMeasureIndex = -1;
 boolean instantMeasureFirstPass = true;
@@ -123,7 +125,7 @@ int hourlyMeasuresIndex = -1;
 boolean hourlyMeasuresFirstPass = true;
 
 #define DAILY_MEASURES_NUMBER 31
-struct Measure dailyMeasures[DAILY_MEASURES_NUMBER];
+struct Measure dailyMeasures[DAILY_MEASURES_NUMBER];*/
 
 time_t lastMinAvg = NULL_MEASURE_VALUE;
 time_t lastHourAvg = NULL_MEASURE_VALUE;
@@ -183,6 +185,9 @@ double round2(double value) {
 }
 
 float calculateAbsoluteHumidity(double temp, double rh) {
+    if (isnan(temp) || isnan (rh)) {
+        return NAN;
+    }
     return 6.112 * pow(2.71828, 17.67 * temp / (243.5 + temp)) * rh * 2.1674 / (273.15 + temp);
 }
 
@@ -343,7 +348,7 @@ void placeDailyMeasureToEeprom(const Measure &measure) {
     placeDailyMeasureToEeprom(measure, true);
 }
 
-void placeMeasure(const Measure &measure, MeasureType measureType) {
+/*void placeMeasure(const Measure &measure, MeasureType measureType) {
     if (isNullMeasure(measure)) {
         return;
     }
@@ -410,7 +415,7 @@ void placeMeasure(const Measure &measure, MeasureType measureType) {
     } else if (measureType == HOURLY) {
         placeHourlyMeasureEeprom(measure);
     }
-}
+}*/
 
 bool isInIntervalOfSeconds(time_t currentTime, time_t measureTime, long intervalSec) {
     if (measureTime == 0 || intervalSec == 0) {
@@ -660,7 +665,7 @@ void syncTime() {
     }
 }
 
-void sendChunkedContent(MeasureType measureType, ContentType contentType, boolean eeprom) {
+/*void sendChunkedContent(MeasureType measureType, ContentType contentType, boolean eeprom) {
     static const char br[5] = "<br>";
     static char cont[MAX_MEASURES_STRING_LENGTH * HTTP_RESPONSE_CHUNKS_SIZE] = "";
     Measure *currMeasures;
@@ -704,10 +709,10 @@ void sendChunkedContent(MeasureType measureType, ContentType contentType, boolea
                 }
                 SimpleMeasure measure;
                 size_t address = EEPROM_DAILY_MEASURES_OFFSET + currentIndex++ * SIMPLE_MEASURE_SIZE;
-                /*Serial.print("Trying to get a daily measure from the next address: ");
+                *//*Serial.print("Trying to get a daily measure from the next address: ");
                 Serial.print(address);
                 Serial.print(", index was: ");
-                Serial.println(currentIndex - 1);*/
+                Serial.println(currentIndex - 1);*//*
 
                 EEPROMr.get(address, measure);
                 Measure measure1 = {
@@ -773,7 +778,7 @@ void sendChunkedContent(MeasureType measureType, ContentType contentType, boolea
 
     server.sendContent("");
     server.client().stop();
-}
+}*/
 
 void clearDailyEeprom() {
     int currentIndex = 0;
@@ -821,7 +826,7 @@ void configureHttpServer() {
         server.send(200, "text/html", "OK");
     });
 
-    server.on("/instant", []() {
+    /*server.on("/instant", []() {
         sendChunkedContent(INSTANT, HTML, false);
     });
 
@@ -847,7 +852,7 @@ void configureHttpServer() {
 
     server.on("/csv/60", []() {
         sendChunkedContent(HOURLY, CSV, false);
-    });
+    });*/
 
     server.on("/setTime", HTTP_POST, []() {
         String message = "";
@@ -903,6 +908,7 @@ void setup() {
     dht21Roof.begin();
     dht21Window.begin();
     dht22LivingRoom.begin();
+    dht22TerraceIn.begin();
     Serial.println("DHTxx Unified Sensor Example");
     // Print temperature sensor details.
     sensor_t sensor;
@@ -1013,14 +1019,14 @@ void setup() {
     EEPROMr.size(4);
     EEPROMr.begin(4 * 1024);
 
-    for (auto &reading : instantMeasures) {
+    /*for (auto &reading : instantMeasures) {
         reading = nullMeasure;
     }
     for (auto &reading : every15minutesMeasures) {
         reading = nullMeasure;
-    }
+    }*/
 
-    int currentHourlyIndex;
+    /*int currentHourlyIndex;
     EEPROMr.get(EEPROM_HOURLY_CURSOR_POSITION_ADDRESS, currentHourlyIndex);
     if (currentHourlyIndex > EEPROM_HOURLY_STORED_MEASURES_NUMBER - 1 || currentHourlyIndex < 0) {
         currentHourlyIndex = 0;
@@ -1030,9 +1036,9 @@ void setup() {
     EEPROMr.get(EEPROM_DAILY_CURSOR_POSITION_ADDRESS, currentDailyIndex);
     if (currentDailyIndex > EEPROM_HOURLY_STORED_MEASURES_NUMBER - 1 || currentDailyIndex < 0) {
         currentDailyIndex = 0;
-    }
+    }*/
 
-    Serial.printf("Hourly EEPROM size: %d, byte range: %d - %d, current index: %d, current byte address: %d\n",
+    /*Serial.printf("Hourly EEPROM size: %d, byte range: %d - %d, current index: %d, current byte address: %d\n",
                   MEASURE_SIZE,
                   EEPROM_HOURLY_MEASURES_OFFSET,
                   EEPROM_HOURLY_MEASURES_OFFSET + EEPROM_HOURLY_STORED_MEASURES_NUMBER * MEASURE_SIZE,
@@ -1047,9 +1053,9 @@ void setup() {
     );
 
 
-    Serial.println("Populating an initial collection with the hourly measures from EEPROM ...");
+    Serial.println("Populating an initial collection with the hourly measures from EEPROM ...");*/
     //CONSTRAINT:  HOURLY_AVG_MEASURES_NUMBER MUST BE GREATER THAN EEPROM_HOURLY_STORED_MEASURES_NUMBER
-    for (int i1 = 0, i2 = HOURLY_AVG_MEASURES_NUMBER - EEPROM_HOURLY_STORED_MEASURES_NUMBER;
+    /*for (int i1 = 0, i2 = HOURLY_AVG_MEASURES_NUMBER - EEPROM_HOURLY_STORED_MEASURES_NUMBER;
          i1 < EEPROM_HOURLY_STORED_MEASURES_NUMBER; i1++, i2++) {
         if (currentHourlyIndex > EEPROM_HOURLY_STORED_MEASURES_NUMBER - 1) {
             currentHourlyIndex = 0;
@@ -1066,8 +1072,8 @@ void setup() {
         hourlyMeasures[i2] = measure;
         Serial.print(", loaded measure: ");
         Serial.println(measureToString(measure));
-    }
-    Serial.println();
+    }*/
+    /*Serial.println();
     hourlyMeasuresFirstPass = false;
     hourlyMeasuresIndex = EEPROM_HOURLY_STORED_MEASURES_NUMBER;
 
@@ -1077,7 +1083,7 @@ void setup() {
         Serial.print(",");
         hourlyMeasures[i] = nullMeasure;
     }
-    Serial.println();
+    Serial.println();*/
 
     if (DEBUG) {
         Serial.print(getTimeString(now()));
@@ -1095,7 +1101,7 @@ void loop() {
     byte currentDay = day(currentTime);
     int currentYear = year(currentTime);
 
-    if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
+    /*if (currentMinute % (period15m / 60) == 0 && currentMinute != lastMinutesAverageMinute) {
         lastMinutesAverageMinute = currentMinute;
         const Measure &measure =
                 calculateAverage(currentTime, MINUTELY, instantMeasures, INSTANT_MEASURES_NUMBER, false);
@@ -1114,7 +1120,7 @@ void loop() {
         const Measure &measure =
                 calculateAverage(currentTime, DAILY, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER, false);
         placeMeasure(measure, DAILY);
-    }
+    }*/
 
     ArduinoOTA.handle();
     server.handleClient();
@@ -1143,18 +1149,20 @@ void loop() {
             pm10 = round4 > SIGNED_SHORT_MAX_VALUE ? SIGNED_SHORT_MAX_VALUE : round4;
         }
 
-        sensors_event_t roofTempEvent, roofHumidEvent;
+        sensors_event_t roofTempEvent, roofHumidEvent, windowTempEvent,
+        windowHumidEvent, livingRoomTempEvent, livingRoomHumidEvent, terraceInTempEvent, terraceInHumidEvent;
+
         dht21Roof.temperature().getEvent(&roofTempEvent);
         dht21Roof.humidity().getEvent(&roofHumidEvent);
 
-        sensors_event_t windowTempEvent, windowHumidEvent;
         dht21Window.temperature().getEvent(&windowTempEvent);
         dht21Window.humidity().getEvent(&windowHumidEvent);
 
-        sensors_event_t livingRoomTempEvent;
-        sensors_event_t livingRoomHumidEvent;
         dht22LivingRoom.temperature().getEvent(&livingRoomTempEvent);
         dht22LivingRoom.humidity().getEvent(&livingRoomHumidEvent);
+
+        dht22TerraceIn.temperature().getEvent(&terraceInTempEvent);
+        dht22TerraceIn.humidity().getEvent(&terraceInHumidEvent);
 
         signed short int roofTemp = isnan(roofTempEvent.temperature) ? NULL_MEASURE_VALUE : round(
                 roofTempEvent.temperature * 100);
@@ -1209,35 +1217,47 @@ void loop() {
                  livingRoomHumidEvent.relative_humidity,
                  round2(calculateAbsoluteHumidity(livingRoomTempEvent.temperature, livingRoomHumidEvent.relative_humidity))
         );
+        Serial.println(measureString);
+        mqttClient.publish(MQTT_TOPIC, measureString, false);
+
+        snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
+                 R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "IN-TERRACE", "air": {"temp": {"celsius": %s, "rh": %s, "ah": %s}}})",
+                 getIsoTimeString(now()),
+                 MQTT_SUBSCRIBER.c_str(),
+                 isnan(terraceInTempEvent.temperature) ? "null" : String(round1(terraceInTempEvent.temperature)).c_str(),
+                 isnan(terraceInTempEvent.relative_humidity) ? "null" : String(round1(terraceInTempEvent.relative_humidity)).c_str(),
+                 isnan(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)) ? "null" : String(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)).c_str()
+        );
+        Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
 
         char *isoTimeString = getIsoTimeString(currentMeasure.measureTime);
         snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
-                 R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "%s", "air": {"quality": {"pm25": %.1f, "pm10": %.1f}, "temp": {"celsius": %.1f, "rh": %.0f, "ah": %.1f}}})",
+                 R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "OUT-TERRACE", "air": {"quality": {"pm25": %.1f, "pm10": %.1f}, "temp": {"celsius": %s, "rh": %s, "ah": %s}}})",
                  isoTimeString,
                  MQTT_SUBSCRIBER.c_str(),
-                 "OUT-TERRACE",
                  round1(currentMeasure.pm25 / 100.0),
                  round1(currentMeasure.pm10 / 100.0),
-                 roofTempEvent.temperature,
-                 roofHumidEvent.relative_humidity,
-                 round2(calculateAbsoluteHumidity(roofTempEvent.temperature, roofHumidEvent.relative_humidity))
+                 isnan(terraceInTempEvent.temperature) ? "null" : String(round1(terraceInTempEvent.temperature)).c_str(),
+                 isnan(terraceInTempEvent.relative_humidity) ? "null" : String(round1(terraceInTempEvent.relative_humidity)).c_str(),
+                 isnan(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)) ? "null" : String(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)).c_str()
         );
+        Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
 
         snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
-                 R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "%s", "air": {"temp": {"celsius": %.1f, "rh": %.0f, "ah": %.1f}}})",
+                 R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "IN-LIVING-ROOM", "air": {"temp": {"celsius": %s, "rh": %s, "ah": %s}}})",
                  isoTimeString,
                  MQTT_SUBSCRIBER.c_str(),
-                 "IN-LIVING-ROOM",
-                 livingRoomTempEvent.temperature,
-                 livingRoomHumidEvent.relative_humidity,
-                 round2(calculateAbsoluteHumidity(livingRoomTempEvent.temperature, livingRoomHumidEvent.relative_humidity))
+                 isnan(terraceInTempEvent.temperature) ? "null" : String(round1(terraceInTempEvent.temperature)).c_str(),
+                 isnan(terraceInTempEvent.relative_humidity) ? "null" : String(round1(terraceInTempEvent.relative_humidity)).c_str(),
+                 isnan(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)) ? "null" : String(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)).c_str()
         );
+        Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
         
         
-        placeMeasure(currentMeasure, INSTANT);
+//        placeMeasure(currentMeasure, INSTANT);
 
         if (DEBUG_CASE2) {
             Serial.print(numberOfEveryMsrPlaced);
@@ -1245,12 +1265,12 @@ void loop() {
             printMeasure(currentMeasure);
         }
 
-        minuteRollupAveragedMeasure = calculateAverage(currentTime, MINUTELY, instantMeasures, INSTANT_MEASURES_NUMBER,
+        /*minuteRollupAveragedMeasure = calculateAverage(currentTime, MINUTELY, instantMeasures, INSTANT_MEASURES_NUMBER,
                                                        true);
         hourlyRollupAveragedMeasure = calculateAverage(currentTime, HOURLY, every15minutesMeasures,
                                                        MINUTES_AVG_MEASURES_NUMBER, true);
         dailyRollupAveragedMeasure = calculateAverage(currentTime, DAILY, hourlyMeasures, HOURLY_AVG_MEASURES_NUMBER,
-                                                      true);
+                                                      true);*/
 
         if (sleepingPeriod > 0) {
             WorkingStateResult state = sds.sleep();
