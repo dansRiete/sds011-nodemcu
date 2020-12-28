@@ -1149,11 +1149,11 @@ void loop() {
             pm10 = round4 > SIGNED_SHORT_MAX_VALUE ? SIGNED_SHORT_MAX_VALUE : round4;
         }
 
-        sensors_event_t roofTempEvent, roofHumidEvent, windowTempEvent,
+        sensors_event_t outTerraceTempEvent, outTerraceHumidEvent, windowTempEvent,
         windowHumidEvent, livingRoomTempEvent, livingRoomHumidEvent, terraceInTempEvent, terraceInHumidEvent;
 
-        dht21Roof.temperature().getEvent(&roofTempEvent);
-        dht21Roof.humidity().getEvent(&roofHumidEvent);
+        dht21Roof.temperature().getEvent(&outTerraceTempEvent);
+        dht21Roof.humidity().getEvent(&outTerraceHumidEvent);
 
         dht21Window.temperature().getEvent(&windowTempEvent);
         dht21Window.humidity().getEvent(&windowHumidEvent);
@@ -1164,18 +1164,20 @@ void loop() {
         dht22TerraceIn.temperature().getEvent(&terraceInTempEvent);
         dht22TerraceIn.humidity().getEvent(&terraceInHumidEvent);
 
-        signed short int roofTemp = isnan(roofTempEvent.temperature) ? NULL_MEASURE_VALUE : round(
-                roofTempEvent.temperature * 100);
-        signed short int roofHumid = isnan(roofHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(
-                roofHumidEvent.relative_humidity * 100);
+        signed short int roofTemp = isnan(outTerraceTempEvent.temperature) ? NULL_MEASURE_VALUE : round(
+                outTerraceTempEvent.temperature * 100);
+        signed short int roofHumid = isnan(outTerraceHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(
+                outTerraceHumidEvent.relative_humidity * 100);
         signed short int windowTemp = isnan(windowTempEvent.temperature) ? NULL_MEASURE_VALUE : round(
                 windowTempEvent.temperature * 100);
         signed short int windowHumid = isnan(windowHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(
                 windowHumidEvent.relative_humidity * 100);
-        signed short int livingRoomTemp = isnan(livingRoomTempEvent.temperature) ? NULL_MEASURE_VALUE : round(
-                livingRoomTempEvent.temperature * 100);
-        signed short int livingRoomHumid = isnan(livingRoomHumidEvent.relative_humidity) ? NULL_MEASURE_VALUE : round(
-                livingRoomHumidEvent.relative_humidity * 100);
+        float livRoomTemp = livingRoomTempEvent.temperature;
+        signed short int livingRoomTemp = isnan(livRoomTemp) ? NULL_MEASURE_VALUE : round(
+                livRoomTemp * 100);
+        float liveRoomHumid = livingRoomHumidEvent.relative_humidity;
+        signed short int livingRoomHumid = isnan(liveRoomHumid) ? NULL_MEASURE_VALUE : round(
+                liveRoomHumid * 100);
 
         char serviceInfo[17];
 
@@ -1207,26 +1209,30 @@ void loop() {
                  getTimeString(currentMeasure.measureTime),
                  round1(currentMeasure.pm25 / 100.0),
                  round1(currentMeasure.pm10 / 100.0),
-                 roofTempEvent.temperature,
-                 roofHumidEvent.relative_humidity,
-                 round2(calculateAbsoluteHumidity(roofTempEvent.temperature, roofHumidEvent.relative_humidity)),
+                 outTerraceTempEvent.temperature,
+                 outTerraceHumidEvent.relative_humidity,
+                 round2(calculateAbsoluteHumidity(outTerraceTempEvent.temperature, outTerraceHumidEvent.relative_humidity)),
                  windowTempEvent.temperature,
                  windowHumidEvent.relative_humidity,
                  round2(calculateAbsoluteHumidity(windowTempEvent.temperature, windowHumidEvent.relative_humidity)),
-                 livingRoomTempEvent.temperature,
-                 livingRoomHumidEvent.relative_humidity,
-                 round2(calculateAbsoluteHumidity(livingRoomTempEvent.temperature, livingRoomHumidEvent.relative_humidity))
+                 livRoomTemp,
+                 liveRoomHumid,
+                 round2(calculateAbsoluteHumidity(livRoomTemp, liveRoomHumid))
         );
         Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
+
+        float terraceInTemp = terraceInTempEvent.temperature;
+        float terraceInHumid = terraceInHumidEvent.relative_humidity;
+        float inTerraceAh = calculateAbsoluteHumidity(terraceInTemp, terraceInHumid);
 
         snprintf(measureString, MAX_MEASURES_STRING_LENGTH,
                  R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "IN-TERRACE", "air": {"temp": {"celsius": %s, "rh": %s, "ah": %s}}})",
                  getIsoTimeString(now()),
                  MQTT_SUBSCRIBER.c_str(),
-                 isnan(terraceInTempEvent.temperature) ? "null" : String(round1(terraceInTempEvent.temperature)).c_str(),
-                 isnan(terraceInTempEvent.relative_humidity) ? "null" : String(round1(terraceInTempEvent.relative_humidity)).c_str(),
-                 isnan(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)) ? "null" : String(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)).c_str()
+                 isnan(terraceInTemp) ? "null" : String(round1(terraceInTemp)).c_str(),
+                 isnan(terraceInHumid) ? "null" : String(round1(terraceInHumid)).c_str(),
+                 isnan(inTerraceAh) ? "null" : String(inTerraceAh).c_str()
         );
         Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
@@ -1238,9 +1244,10 @@ void loop() {
                  MQTT_SUBSCRIBER.c_str(),
                  round1(currentMeasure.pm25 / 100.0),
                  round1(currentMeasure.pm10 / 100.0),
-                 isnan(terraceInTempEvent.temperature) ? "null" : String(round1(terraceInTempEvent.temperature)).c_str(),
-                 isnan(terraceInTempEvent.relative_humidity) ? "null" : String(round1(terraceInTempEvent.relative_humidity)).c_str(),
-                 isnan(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)) ? "null" : String(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)).c_str()
+                 isnan(outTerraceTempEvent.temperature) ? "null" : String(round1(outTerraceTempEvent.temperature)).c_str(),
+                 isnan(outTerraceHumidEvent.relative_humidity) ? "null" : String(round1(outTerraceHumidEvent.relative_humidity)).c_str(),
+                 isnan(calculateAbsoluteHumidity(outTerraceTempEvent.temperature, outTerraceHumidEvent.relative_humidity)) ? "null" :
+                 String(calculateAbsoluteHumidity(outTerraceTempEvent.temperature, outTerraceHumidEvent.relative_humidity)).c_str()
         );
         Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
@@ -1249,9 +1256,10 @@ void loop() {
                  R"({"messageIssued": "%s", "publisherId": "%s", "measurePlace": "IN-LIVING-ROOM", "air": {"temp": {"celsius": %s, "rh": %s, "ah": %s}}})",
                  isoTimeString,
                  MQTT_SUBSCRIBER.c_str(),
-                 isnan(terraceInTempEvent.temperature) ? "null" : String(round1(terraceInTempEvent.temperature)).c_str(),
-                 isnan(terraceInTempEvent.relative_humidity) ? "null" : String(round1(terraceInTempEvent.relative_humidity)).c_str(),
-                 isnan(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)) ? "null" : String(calculateAbsoluteHumidity(terraceInTempEvent.temperature, terraceInHumidEvent.relative_humidity)).c_str()
+                 isnan(livRoomTemp) ? "null" : String(round1(livRoomTemp)).c_str(),
+                 isnan(liveRoomHumid) ? "null" : String(round1(liveRoomHumid)).c_str(),
+                 isnan(calculateAbsoluteHumidity(livRoomTemp, liveRoomHumid)) ? "null" :
+                 String(calculateAbsoluteHumidity(livRoomTemp, liveRoomHumid)).c_str()
         );
         Serial.println(measureString);
         mqttClient.publish(MQTT_TOPIC, measureString, false);
