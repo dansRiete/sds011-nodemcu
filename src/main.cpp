@@ -35,7 +35,7 @@ const boolean DEBUG_CASE2 = true;
 #define DHT21_ROOF_PIN 12
 #define DHT21_WINDOW_PIN 4
 #define DHT22_LIVING_ROOM_PIN 13
-#define DHT22_TERRACE_IN_PIN 16
+#define DHT22_TERRACE_IN_PIN 14
 #define SDS_RX_PIN 2
 #define SDS_DX_PIN 0
 
